@@ -235,19 +235,21 @@ class Island:
         self._backdrop, self._backdrop_at = None, 0.0
 
         import os
-        inter = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui", "fonts", "Inter.ttf")
+        # Geist: clean and modern, close in spirit to Apple's San Francisco
+        # (which can't be bundled). Regular and medium weights -- not bold.
+        fonts = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui", "fonts")
 
         def f(size, weight):
-            font = ImageFont.truetype(inter, int(size * self.s))
+            font = ImageFont.truetype(os.path.join(fonts, "Geist.ttf"), int(size * self.s))
             try:
-                font.set_variation_by_axes([14, weight])         # opsz, wght
+                font.set_variation_by_axes([weight])
             except Exception:
                 pass
             return font
         try:
-            self.font_text = f(15, 500)
-            self.font_label = f(14, 700)
-            self.font_small = f(11.5, 600)
+            self.font_text = f(15.5, 400)
+            self.font_label = f(14.5, 500)
+            self.font_small = f(12, 400)
         except OSError:
             self.font_text = self.font_label = self.font_small = ImageFont.load_default()
 
@@ -395,29 +397,21 @@ class Island:
         self.y.target, self.w.target, self.h.target, self.alpha.target = TOP_MARGIN * s, w, h, 1.0
 
     # ---- rendering ------------------------------------------------------------------
-    def _glass_backdrop(self, now):
-        """What's behind the island, frosted: blurred, lightly magnified (the
-        'lens' look of liquid glass) and saturated. Captured on its own thread
-        (_backdrop_loop) -- a capture took 45ms when it grabbed the whole
-        two-monitor desktop, which alone dragged the animation to ~24fps."""
-        if self._backdrop is None:
-            return Image.new("RGBA", (self.W, self.H), (16, 17, 24, 255))
-        return self._backdrop
-
     def _capture_backdrop(self):
         from PIL import ImageEnhance, ImageGrab
+        import numpy as np
         W, H = self.W, self.H
         # Only the island's own strip of the primary monitor (all_screens=False:
         # coordinates are relative to the primary, which the island lives on).
+        # Captured on its own thread (_backdrop_loop): grabbing both monitors
+        # took 45ms a frame and dragged the animation to ~24fps.
         shot = ImageGrab.grab(bbox=(self.win_x, self.win_y, self.win_x + W, self.win_y + H)).convert("RGB")
-        zoom = 1.08                                              # magnify toward the centre
-        cw, ch = int(W / zoom), int(H / zoom)
-        shot = shot.crop(((W - cw) // 2, 0, (W - cw) // 2 + cw, ch))
-        small = shot.resize((max(1, W // 5), max(1, H // 5)), Image.BILINEAR)
-        small = small.filter(ImageFilter.GaussianBlur(3.5))
-        small = ImageEnhance.Color(small).enhance(1.5)
-        small = ImageEnhance.Brightness(small).enhance(0.55)
-        self._backdrop = small.resize((W, H), Image.BICUBIC).convert("RGBA")
+        # Liquid glass is CLEAR, not frosted: just a touch of softening and a
+        # little extra saturation. The bending happens in _draw.
+        soft = shot.resize((max(1, W // 2), max(1, H // 2)), Image.BILINEAR)
+        soft = soft.filter(ImageFilter.GaussianBlur(1.2)).resize((W, H), Image.BICUBIC)
+        soft = ImageEnhance.Color(soft).enhance(1.25)
+        self._backdrop = np.asarray(soft, dtype=np.float32)
 
     def _backdrop_loop(self):
         _user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
@@ -432,6 +426,9 @@ class Island:
                 time.sleep(0.2)
 
     def _draw(self, now):
+        """Apple-style liquid glass: clear, refracting at the edges, lit by a
+        white specular rim. No colour of its own -- only what's behind it."""
+        import numpy as np
         s, W, H = self.s, self.W, self.H
         t = now - self.t0
         w, h, y = max(self.w.value, 20 * s), max(self.h.value, 20 * s), self.y.value
@@ -441,96 +438,109 @@ class Island:
         radius = min(h / 2, 28 * s)
         frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
-        # soft drop shadow (blurred anyway, so half resolution is plenty)
+        # soft floating shadow
         sw, sh = W // 2, H // 2
         sm = Image.new("L", (sw, sh), 0)
-        ImageDraw.Draw(sm).rounded_rectangle([c / 2 for c in (box[0], box[1] + 8 * s, box[2], box[3] + 8 * s)],
-                                             radius / 2, fill=int(150 * a))
-        sm = sm.filter(ImageFilter.GaussianBlur(9 * s)).resize((W, H), Image.BILINEAR)
-        frame.paste((0, 0, 0, 255), (0, 0), sm)
+        ImageDraw.Draw(sm).rounded_rectangle(
+            [c / 2 for c in (box[0] + 6 * s, box[1] + 10 * s, box[2] - 6 * s, box[3] + 10 * s)],
+            radius / 2, fill=int(110 * a))
+        frame.paste((0, 0, 0, 255), (0, 0),
+                    sm.filter(ImageFilter.GaussianBlur(10 * s)).resize((W, H), Image.BILINEAR))
 
-        # the glass body -- anti-aliased edge, frosted backdrop + dark tint
         body = _aa_rrect((W, H), box, radius)
-        frame.paste(self._glass_backdrop(now), (0, 0), body.point(lambda v: int(v * a)))
-        frame.paste((10, 11, 15, 255), (0, 0), body.point(lambda v: int(v * 0.62 * a)))
+        rx1, ry1 = max(0, int(box[0]) - 2), max(0, int(box[1]) - 2)
+        rx2, ry2 = min(W, int(math.ceil(box[2])) + 2), min(H, int(math.ceil(box[3])) + 2)
+        if rx2 - rx1 > 4 and ry2 - ry1 > 4:
+            bg = self._backdrop if self._backdrop is not None else np.full((H, W, 3), 30.0, np.float32)
+            # Refraction: blur the pill's outline; its gradient points inward near
+            # the rim. Sampling the background a little further inward there
+            # bends and magnifies it, like light through a thick lens.
+            m = np.asarray(_soft(body, max(4.0, min(h, w) * 0.42)), dtype=np.float32)[ry1:ry2, rx1:rx2] / 255.0
+            gy, gx = np.gradient(m)
+            depth = min(h, 90 * s) * 1.6
+            yy, xx = np.mgrid[ry1:ry2, rx1:rx2].astype(np.float32)
+            out = np.empty((ry2 - ry1, rx2 - rx1, 3), np.float32)
+            for ch, k in ((0, 1.06), (1, 1.0), (2, 0.94)):   # slight per-channel split = glassy fringe
+                sx = np.clip(xx + gx * depth * k * 2.2, 0, W - 1)
+                sy = np.clip(yy + gy * depth * k, 0, H - 1)
+                x0i, y0i = sx.astype(np.int32), sy.astype(np.int32)
+                x1i, y1i = np.minimum(x0i + 1, W - 1), np.minimum(y0i + 1, H - 1)
+                fx, fy = sx - x0i, sy - y0i
+                c = bg[..., ch]
+                out[..., ch] = ((c[y0i, x0i] * (1 - fx) + c[y0i, x1i] * fx) * (1 - fy)
+                                + (c[y1i, x0i] * (1 - fx) + c[y1i, x1i] * fx) * fy)
+            # a whisper of tint, adapting to what's behind (like Apple's glass):
+            # over something bright, dim more so the white text stays readable
+            lum = float(out.mean())
+            dim = 0.74 if lum < 120 else max(0.42, 0.74 - (lum - 120) / 135 * 0.32)
+            out = out * dim + 255 * 0.05
+            glass = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            glass.paste(Image.fromarray(out.clip(0, 255).astype(np.uint8), "RGB"), (rx1, ry1))
+            frame.paste(glass, (0, 0), body.point(lambda v: int(v * a)))
 
-        # flowing liquid rim: soft colour blobs, blurred, seen only near the edge
-        core, colours = PALETTES.get(self.state, PALETTES["idle"])
-        bw, bh = max(8, W // 6), max(8, H // 6)
-        blobs = Image.new("RGB", (bw, bh), (0, 0, 0))
-        d = ImageDraw.Draw(blobs)
-        cx, cy, rw, rh = (box[0] + box[2]) / 12, (box[1] + box[3]) / 12, w / 12, h / 12
-        speed = 1.6 if self.state in ("speaking", "listening") else 0.9
-        # Blobs travel AROUND the edge (not across the middle), so the rim is
-        # lit all the way round and the colour flows along it.
-        r = max(rh * 0.9, min(rw, rh) * 1.1, 3)
-        n = len(colours) * 2
-        for i in range(n):
-            col = colours[i % len(colours)]
-            ph = t * speed * 0.55 + i * (2 * math.pi / n) + math.sin(t * 0.7 + i) * 0.25
-            bx = cx + math.cos(ph) * rw * 0.92
-            by = cy + math.sin(ph) * rh * 0.92
-            d.ellipse([bx - r, by - r, bx + r, by + r], fill=_rgb(col))
-        blobs = blobs.filter(ImageFilter.GaussianBlur(max(2, bw / 30))).resize((W, H), Image.BILINEAR)
-
-        rim_w = 2.0 * s
-        inset = _aa_rrect((W, H), (box[0] + rim_w, box[1] + rim_w, box[2] - rim_w, box[3] - rim_w),
-                          max(1, radius - rim_w))
-        ring = ImageChops.subtract(body, inset)                 # crisp, anti-aliased rim
-        inner = _aa_rrect((W, H), (box[0] + 11 * s, box[1] + 11 * s, box[2] - 11 * s, box[3] - 11 * s),
-                          max(1, radius - 11 * s))
-        glow = _soft(ImageChops.subtract(body, inner), 6 * s)
-        pulse = 0.75 + 0.25 * math.sin(t * (6 if self.state == "speaking" else 2.4))
-        # light spilling OUTSIDE the pill -- the Siri bloom
-        halo = ImageChops.subtract(_soft(body, 13 * s), body)
-        frame.paste(blobs, (0, 0), halo.point(lambda v: int(min(255, v * 2.4) * 0.8 * a * pulse)))
-        frame.paste(blobs, (0, 0), glow.point(lambda v: int(v * 0.36 * a * pulse)))
-        frame.paste(blobs, (0, 0), ring.point(lambda v: int(v * 0.95 * a)))
-        # specular: a thin bright line along the top of the glass
-        spec = ImageChops.subtract(inset, _aa_rrect((W, H), (box[0] + rim_w + 1.2 * s, box[1] + rim_w + 1.2 * s,
-                                                            box[2] - rim_w - 1.2 * s, box[3] - rim_w),
-                                                    max(1, radius - rim_w - 1.2 * s)))
-        top_fade = Image.linear_gradient("L").transpose(Image.FLIP_TOP_BOTTOM).resize((W, max(1, int(h * 0.5))))
-        fade_full = Image.new("L", (W, H), 0)
-        fade_full.paste(top_fade, (0, int(y)))
-        frame.paste((255, 255, 255, 255), (0, 0), ImageChops.multiply(spec, fade_full).point(lambda v: int(v * 0.7 * a)))
-
-        # top sheen: a smooth vertical fade inside the glass, no hard edge
-        grad = Image.linear_gradient("L").resize((1, 256)).transpose(Image.FLIP_TOP_BOTTOM)
-        grad = grad.point(lambda v: int(v * v / 255 * 0.09 * a)).resize((W, max(1, int(h * 0.6))))
+        # specular light: bright rim at the top fading down the sides
+        inset1 = _aa_rrect((W, H), (box[0] + 1.3 * s, box[1] + 1.3 * s, box[2] - 1.3 * s, box[3] - 1.3 * s),
+                           max(1, radius - 1.3 * s))
+        rim = ImageChops.subtract(body, inset1)
+        vert = Image.linear_gradient("L").resize((1, 256))                       # 0 top -> 255 bottom
+        vert = vert.point(lambda v: int(255 - v * 0.62)).resize((W, max(1, int(h))))
+        light = Image.new("L", (W, H), 0)
+        light.paste(vert, (0, int(y)))
+        frame.paste((255, 255, 255, 255), (0, 0),
+                    ImageChops.multiply(rim, light).point(lambda v: int(v * 0.85 * a)))
+        # soft sheen across the top of the glass
+        inner = _aa_rrect((W, H), (box[0] + 3 * s, box[1] + 3 * s, box[2] - 3 * s, box[3] - 3 * s),
+                          max(1, radius - 3 * s))
+        top = Image.linear_gradient("L").transpose(Image.FLIP_TOP_BOTTOM).resize((W, max(1, int(h * 0.42))))
         sheen = Image.new("L", (W, H), 0)
-        sheen.paste(grad, (0, int(y)))
-        frame.paste((255, 255, 255, 255), (0, 0), ImageChops.multiply(sheen, inset))
+        sheen.paste(top.point(lambda v: int(v * v / 255 * 0.16)), (0, int(y)))
+        frame.paste((255, 255, 255, 255), (0, 0), ImageChops.multiply(sheen, inner).point(lambda v: int(v * a)))
+        # faint reflection along the inside of the bottom edge
+        bot = _aa_rrect((W, H), (box[0] + radius * 0.6, box[3] - 3.2 * s, box[2] - radius * 0.6, box[3] - 2.2 * s), 1 * s)
+        frame.paste((255, 255, 255, 255), (0, 0), bot.point(lambda v: int(v * 0.22 * a)))
 
-        # content (only once the pill is big enough to hold it)
+        # content: a white glyph for the state, then white text
         if w > 120 * s and h > 40 * s and a > 0.3:
-            dr = ImageDraw.Draw(frame)
             ta = int(255 * min(1.0, (a - 0.3) / 0.5))
             ocx, ocy = box[0] + 28 * s, box[1] + min(h / 2, 27 * s)
-            orb_r = (8 + (2 * pulse if self.state != "idle" else 0)) * s
-            halo = Image.new("L", (W, H), 0)
-            ImageDraw.Draw(halo).ellipse((ocx - orb_r * 2, ocy - orb_r * 2, ocx + orb_r * 2, ocy + orb_r * 2),
-                                         fill=int(120 * a))
-            frame.paste(_rgb(core) + (255,), (0, 0), halo.filter(ImageFilter.GaussianBlur(5 * s)))
-            orb = _aa_ellipse((W, H), (ocx - orb_r, ocy - orb_r, ocx + orb_r, ocy + orb_r))
-            frame.paste(_rgb(core) + (255,), (0, 0), orb.point(lambda v: v * ta // 255))
-            shine = _aa_ellipse((W, H), (ocx - orb_r * .55, ocy - orb_r * .7, ocx - orb_r * .05, ocy - orb_r * .2))
-            frame.paste((255, 255, 255, 255), (0, 0), shine.point(lambda v: int(v * ta * .45 / 255)))
+            glyph = Image.new("L", (W, H), 0)
+            if self.state in ("listening", "speaking"):
+                fast = self.state == "speaking"
+                for i in range(5):                                # waveform bars
+                    amp = abs(math.sin(t * (8.5 if fast else 3.6) + i * 0.95))
+                    bh = (5 + amp * (13 if fast else 8)) * s
+                    bx = ocx + (i - 2) * 5 * s
+                    glyph = ImageChops.lighter(glyph, _aa_rrect(
+                        (W, H), (bx - 1.4 * s, ocy - bh / 2, bx + 1.4 * s, ocy + bh / 2), 1.4 * s))
+            elif self.state == "thinking":
+                for i in range(3):                                # three pulsing dots
+                    p = 0.35 + 0.65 * max(0.0, math.sin(t * 5 - i * 0.9))
+                    dx = ocx + (i - 1) * 7 * s
+                    dot = _aa_ellipse((W, H), (dx - 2.6 * s, ocy - 2.6 * s, dx + 2.6 * s, ocy + 2.6 * s))
+                    glyph = ImageChops.lighter(glyph, dot.point(lambda v, p=p: int(v * p)))
+            else:
+                glyph = _aa_ellipse((W, H), (ocx - 4 * s, ocy - 4 * s, ocx + 4 * s, ocy + 4 * s))
+            frame.paste((255, 255, 255, 255), (0, 0), glyph.point(lambda v: v * ta // 255))
+
+            dr = ImageDraw.Draw(frame)
+
+            def text(xy, txt, font, alpha):
+                dr.text((xy[0], xy[1] + 1 * s), txt, font=font, fill=(0, 0, 0, int(alpha * 0.35)))
+                dr.text(xy, txt, font=font, fill=(255, 255, 255, int(alpha)))
 
             label, lines = self._content()
             tx = box[0] + 50 * s
             compact_only = not (self.notice or self.reply_text or self.user_text)
             if compact_only:
                 bbox = self.font_label.getbbox(lines[0])
-                dr.text((tx, ocy - (bbox[1] + bbox[3]) / 2), lines[0], font=self.font_label,
-                        fill=(238, 240, 246, ta))
+                text((tx, ocy - (bbox[1] + bbox[3]) / 2), lines[0], self.font_label, ta)
             else:
                 ty = box[1] + 13 * s
                 if label:
-                    dr.text((tx, ty), label, font=self.font_small, fill=(150, 156, 172, ta))
+                    text((tx, ty), label, self.font_small, ta * 0.62)
                     ty += 17 * s
                 for line in lines:
-                    dr.text((tx, ty), line, font=self.font_text, fill=(238, 240, 246, ta))
+                    text((tx, ty), line, self.font_text, ta)
                     ty += 21 * s
 
         return frame
