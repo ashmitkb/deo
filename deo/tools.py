@@ -694,6 +694,33 @@ def run_code_file(path: str, input_text: str = "") -> dict:
                        f"the user can type into it there."}
 
 
+def look_at_region(question: str = "") -> dict:
+    """Let the user drag a box over part of the screen (deo/snip.py, its own
+    process, like the Snipping Tool) and answer their question about it."""
+    import json as _json
+    import tempfile
+    out = os.path.join(tempfile.gettempdir(), "deo_snip.png")
+    try:
+        os.remove(out)
+    except OSError:
+        pass
+    try:
+        proc = subprocess.run([sys.executable, "-m", "deo.snip", "--out", out],
+                              cwd=config.PROJECT_ROOT, capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": "The selection timed out."}
+    if proc.returncode != 0 or not os.path.exists(out):
+        return {"success": False, "message": "The user cancelled the selection -- say so briefly."}
+    from .screen_qa import look_at_image_file
+    return look_at_image_file(out, question)
+
+
+def solve_screen_question() -> dict:
+    """Read the whole screen the user is working on and find the question(s)."""
+    from .screen_qa import find_questions_on_screen
+    return find_questions_on_screen()
+
+
 def look_at_screen(question: str = "") -> dict:
     """Imported lazily: screen_qa pulls in mss, PIL and the TTS module, none of
     which a turn that never looks at the screen should pay for."""
@@ -1067,6 +1094,26 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "look_at_region",
+            "description": "Let the user SELECT part of their screen (a screenshot-style crosshair) and answer a question about it. Use when they say 'look at this', 'what is this', 'see this picture', 'check this out' -- anything where they want to show you something specific. It waits while they drag a box.",
+            "parameters": {
+                "type": "object",
+                "properties": {"question": {"type": "string", "description": "What they want to know about it, in their words"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "solve_screen_question",
+            "description": "Read the WHOLE screen and find the question(s) on it so you can solve them. Use when the user asks to solve/answer the question on their screen. Then answer: the option first, then a short reason.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "look_at_screen",
             "description": "Take a screenshot of the user's main screen and answer a question about it with a vision model. Use whenever the user asks what's on their screen, to read something shown, or about what they're looking at. Slow (several seconds) -- only when needed.",
             "parameters": {
@@ -1125,6 +1172,8 @@ TOOL_REGISTRY = {
     "recall_all": Memory.recall_all,
     "close_app": close_app,
     "look_at_screen": look_at_screen,
+    "look_at_region": look_at_region,
+    "solve_screen_question": solve_screen_question,
     "delete_file": delete_file,
     "create_code_file": create_code_file,
     "run_code_file": run_code_file,

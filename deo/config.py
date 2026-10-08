@@ -251,7 +251,9 @@ MCP_SERVERS = {
 
 SCREEN_QA_DIRECT_HOTKEY = "ctrl+alt+d"
 SCREEN_QA_EXPLAIN_HOTKEY = "ctrl+alt+e"
-SCREEN_QA_VISION_MODEL = "qwen2.5vl:7b"   # or "llava:7b" if VRAM is tight
+# Deo's own brain can see -- using it for vision means no second ~6GB model
+# loading on the 8GB GPU. (Was qwen2.5vl:7b.)
+SCREEN_QA_VISION_MODEL = "qwen3.5:9b"
 SCREEN_QA_COOLDOWN = 2.0
 # When True, every capture is also written to last_screen_qa_capture.png so you
 # can eyeball exactly what the vision model was given. Off by default -- it's a
@@ -457,6 +459,10 @@ The user's browser is Brave; only use another browser if they name it.
 
 FILES: to delete, use delete_file with the name directly. To find a file, use search_files --
 never list_directory on a big folder like Downloads, the listing gets cut off.
+
+SEEING: if the user wants to show you something ("look at this", "what is this"), call
+look_at_region -- they'll drag a box over it. To solve a question on their screen, call
+solve_screen_question. For a general "what's on my screen", call look_at_screen.
 
 CODE: you CAN write programs. When asked to write, make or create code or a script, call
 create_code_file with the complete code -- it saves it and opens it in PyCharm. Never read code
