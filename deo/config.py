@@ -498,6 +498,12 @@ APP_FUZZY_MATCH_CUTOFF = 0.6
 # 2. First run downloads the hand landmark model (~one-time, needs internet
 #    that one time) to GESTURE_MODEL_PATH. Detection itself runs fully
 #    offline afterwards, same as everything else in Deo.
+# --- The island (deo/island.py) ---
+# Siri / Dynamic-Island style glass pill that drops from the top of the main
+# screen while the Deo window is closed. Never takes focus or clicks. Long
+# replies open the full window instead (not while a game is running).
+ISLAND_ENABLED = True
+
 GESTURE_ENABLED = True
 GESTURE_CAMERA_INDEX = 0  # change if the wrong webcam is picked on a multi-camera machine
 GESTURE_MODEL_PATH = _path("deo", "vision", "hand_landmarker.task")

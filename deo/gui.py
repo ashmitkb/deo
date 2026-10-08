@@ -151,6 +151,14 @@ class ChatView(tk.Frame):
         self.canvas.bind_all("<MouseWheel>", self._on_wheel)
 
     def add(self, kind, who, text):
+        if kind == "assistant" and self._messages and self._messages[-1][0] == "stream":
+            self._messages[-1] = (kind, who, text, self._messages[-1][3])   # finalise the live bubble
+            self._render()
+            return
+        if kind == "stream" and self._messages and self._messages[-1][0] == "stream":
+            self._messages[-1] = (kind, who, text, self._messages[-1][3])
+            self._render()
+            return
         self._messages.append((kind, who, text, time.strftime("%H:%M")))
         self._messages = self._messages[-self.MAX_MESSAGES:]
         self._render()
@@ -242,6 +250,12 @@ class DeoGUI:
         self._paused = False
         self._status = "idle"
         self.tray_active = False      # set by the tray: closing then hides instead of quitting
+        # The island (island.py) mirrors what's happening while this window is
+        # closed. Set by main.py, along with is_gaming.
+        self.island = None
+        self.is_gaming = lambda: False
+        self._window_shown = not start_hidden
+        self._handed_off = False
 
         self.root = tk.Tk()
         if start_hidden:
@@ -378,21 +392,54 @@ class DeoGUI:
     def _on_close(self):
         if self.tray_active:
             self.root.withdraw()      # keep running in the tray
+            self._window_shown = False
         else:
             self.root.destroy()
 
     # ---- thread-safe public API -----------------------------------------
+    # Replies longer than this, or with code / a list in them, open the full
+    # window instead of squeezing into the island (unless a game is running).
+    ISLAND_MAX_CHARS = 260
+
+    def _to_island(self, kind, payload=None):
+        if self.island is not None and not self._window_shown:
+            self.island.post(kind, payload)
+
+    @classmethod
+    def _is_big(cls, text):
+        return len(text) > cls.ISLAND_MAX_CHARS or "```" in text or text.count("\n") >= 3
+
     def push_user_message(self, text):
         self._queue.put(("user", text))
+        self._handed_off = False
+        self._to_island("user", text)
+
+    def push_reply_chunk(self, text_so_far):
+        """The reply as spoken so far -- streams into the window and the island."""
+        self._queue.put(("stream", text_so_far))
+        if self._handed_off or self.island is None or self._window_shown:
+            return
+        if self._is_big(text_so_far) and not self.is_gaming():
+            self._handed_off = True
+            self.island.post("notice", "Full answer in the Deo window")
+            self.request_show(focus=False)
+        else:
+            self.island.post("reply", text_so_far)
 
     def push_assistant_message(self, text):
         self._queue.put(("assistant", text))
+        if not self._handed_off:
+            self._to_island("reply", text)
 
-    def push_system_message(self, text):
+    def push_system_message(self, text, island=False):
+        """island=True also flashes it on the island (gestures, alerts)."""
         self._queue.put(("system", text))
+        if island:
+            self._to_island("notice", text)
 
     def push_status(self, status):
         self._queue.put(("status", status))
+        self._to_island("status", status)
 
     def push_info(self, text):
         """Small line under the status: brain model, next timer, etc."""
@@ -401,8 +448,8 @@ class DeoGUI:
     def push_paused(self, paused):
         self._queue.put(("paused", paused))
 
-    def request_show(self):
-        self._queue.put(("show", None))
+    def request_show(self, focus=True):
+        self._queue.put(("show", focus))
 
     def request_toggle_visible(self):
         self._queue.put(("toggle", None))
@@ -428,9 +475,15 @@ class DeoGUI:
                 elif kind == "paused":
                     self._set_paused(payload)
                 elif kind == "show":
-                    self._show()
+                    self._show(focus=payload is not False)
+                elif kind == "stream":
+                    self._chat.add("stream", self._assistant_name, payload)
                 elif kind == "toggle":
-                    self.root.withdraw() if self.root.winfo_viewable() else self._show()
+                    if self.root.winfo_viewable():
+                        self.root.withdraw()
+                        self._window_shown = False
+                    else:
+                        self._show()
                 elif kind == "quit":
                     self.root.destroy()
                     return
@@ -438,10 +491,14 @@ class DeoGUI:
             pass
         self.root.after(50, self._poll_queue)
 
-    def _show(self):
+    def _show(self, focus=True):
+        self._window_shown = True
+        if self.island is not None:
+            self.island.post("hide")
         self.root.deiconify()
         self.root.lift()
-        self.root.focus_force()
+        if focus:
+            self.root.focus_force()
 
     def add_user_message(self, text):
         self._chat.add("user", "You", text)

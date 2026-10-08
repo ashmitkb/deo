@@ -622,6 +622,48 @@ def test_speaker_check():
         check("the owner's own recording is accepted", ok, f"score {score}")
 
 
+def test_island_handoff():
+    print("\nisland: short replies stay, long ones open the full window")
+    import queue as _queue
+    from deo.gui import DeoGUI
+
+    class FakeIsland:
+        def __init__(self):
+            self.posts = []
+        def post(self, kind, payload=None):
+            self.posts.append((kind, payload))
+
+    def fresh(gaming=False, window_open=False):
+        g = DeoGUI.__new__(DeoGUI)            # no Tk window needed for the routing logic
+        g._queue, g.island, g._handed_off = _queue.Queue(), FakeIsland(), False
+        g._window_shown, g.is_gaming = window_open, (lambda: gaming)
+        g.shown = []
+        g.request_show = lambda focus=True: g.shown.append(focus)
+        return g
+
+    g = fresh()
+    g.push_user_message("what time is it")
+    g.push_reply_chunk("It's 9:42 PM.")
+    check("a short reply shows on the island", ("reply", "It's 9:42 PM.") in g.island.posts and not g.shown)
+
+    long = "India is a diverse country. " * 12
+    g = fresh()
+    g.push_reply_chunk(long)
+    check("a long reply opens the full window, without stealing focus", g.shown == [False])
+    check("and the island says where it went", any(k == "notice" for k, _ in g.island.posts))
+    g.push_reply_chunk(long + " More.")
+    check("it only hands off once", g.shown == [False])
+
+    g = fresh(gaming=True)
+    g.push_reply_chunk(long)
+    check("while gaming the window never pops up", not g.shown and g.island.posts[-1][0] == "reply")
+
+    g = fresh(window_open=True)
+    g.push_user_message("hi"); g.push_status("listening")
+    check("with the window open the island stays out of the way", not g.island.posts)
+    check("code always goes to the window", DeoGUI._is_big("here:\n```python\nprint(1)\n```"))
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -730,7 +772,7 @@ def main():
                  test_gesture_swipe, test_echo_rejection, test_wake_debounce, test_wake_verifier,
                  test_kokoro_fallback, test_everything_compiles, test_finger_poses, test_code_never_spoken, test_barge_in, test_code_file_newlines, test_game_mode_and_barge_in_verifier, test_prompt_echo,
                  test_conversation_survives_restart, test_timers,
-                 test_interrupted_reply_is_remembered, test_speaker_check,
+                 test_interrupted_reply_is_remembered, test_speaker_check, test_island_handoff,
                  test_vad):
         try:
             test()

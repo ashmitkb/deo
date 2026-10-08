@@ -83,6 +83,7 @@ def _ask_and_speak(brain: Brain, gui: DeoGUI, user_text: str):
                 if not spoken:
                     _status(gui, "speaking")  # first sentence => audio starts now
                 spoken.append(sentence)
+                gui.push_reply_chunk(" ".join(spoken))
                 yield sentence
             # Generation finished; audio is very likely still playing.
             reply = " ".join(spoken).strip()
@@ -265,7 +266,7 @@ def handle_gesture(direction: str, gui: DeoGUI):
     gui.push_status("thinking")
     result = move_active_window(direction)
     print(f"[gesture] {result['message']}")
-    gui.push_system_message(f"Gesture: swiped {direction} -- {result['message']}")
+    gui.push_system_message(f"Gesture: {direction} -- {result['message']}", island=True)
 
     if result["success"]:
         with speech_lock:
@@ -386,6 +387,17 @@ def main(start_hidden: bool = False):
         start_hidden=start_hidden,
     )
 
+    # The island: Siri-style glass pill at the top of the screen while the
+    # window is closed. Long replies hand off to the window (gui.py).
+    if config.ISLAND_ENABLED:
+        try:
+            from deo.island import Island
+            gui.island = Island().start()
+            from deo import gamemode as _gm
+            gui.is_gaming = lambda: bool(_gm.running_game())
+        except Exception as e:
+            print(f"[island] unavailable: {e}")
+
     # Tray icon: closing the window hides it there instead of quitting.
     tray = None
     try:
@@ -487,6 +499,8 @@ def main(start_hidden: bool = False):
         if gesture_listener:
             gesture_listener.stop()
         mcp_bridge.stop()
+        if gui.island is not None:
+            gui.island.post("quit")
         if tray:
             try:
                 tray.icon.stop()
