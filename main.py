@@ -95,7 +95,11 @@ def _ask_and_speak(brain: Brain, gui: DeoGUI, user_text: str):
 
         try:
             with speech_lock:
-                tts.speak_stream(sentence_stream())
+                said = tts.speak_stream(sentence_stream())
+            if _barge_in.is_set():
+                # Cut off mid-reply: keep what was actually said, so "carry
+                # on" / "continue" can resume from there.
+                brain.record_interrupted(said)
         except Exception as e:
             # Before this, an error mid-turn (the model rejecting an oversized
             # request, say) escaped to the wake-word thread: nothing was
@@ -294,7 +298,24 @@ def _provider_status_line() -> str:
     return f"LLM: {llm}{llm_fb}\nSTT: {stt}{stt_fb}\nTTS: {tts}{tts_fb}"
 
 
+def _already_running() -> bool:
+    """One Deo at a time. With Deo starting at login, running it again by hand
+    would put two copies on the same mic, camera and wake word -- double
+    replies and a fight over the webcam. A named Windows mutex is released
+    automatically when the process exits, even if it crashes."""
+    import ctypes
+    global _instance_mutex
+    _instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, r"Local\DeoVoiceAssistant")
+    return ctypes.windll.kernel32.GetLastError() == 183   # ERROR_ALREADY_EXISTS
+
+
+_instance_mutex = None
+
+
 def main():
+    if _already_running():
+        print(f"{config.ASSISTANT_NAME} is already running -- not starting a second copy.")
+        return
     print(f"=== {config.ASSISTANT_NAME} is online ===")
     print(_provider_status_line())
     if not config.GROQ_API_KEY:

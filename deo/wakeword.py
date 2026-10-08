@@ -156,7 +156,9 @@ class WakeWordListener:
         speaking = bool(self.playback_text())
         if speaking:
             if self._pb is None:
-                self._pb = {"start": time.monotonic(), "peak_score": 0.0, "levels": []}
+                self._pb = {"start": time.monotonic(), "peak_score": 0.0, "levels": [], "audio": []}
+            if getattr(config, "DEBUG_SAVE_PLAYBACK_AUDIO", False) and len(self._pb["audio"]) < 1500:
+                self._pb["audio"].append(frame.copy())      # <= 2 minutes
             self._pb["peak_score"] = max(self._pb["peak_score"], max(predictions.values(), default=0.0))
             self._pb["levels"].append(float(np.sqrt(np.mean((frame.astype(np.float32) / 32768.0) ** 2))))
         elif self._pb is not None:
@@ -165,6 +167,17 @@ class WakeWordListener:
             print(f"[wakeword] while Deo spoke ({time.monotonic() - self._pb['start']:.0f}s): "
                   f"peak wake score {self._pb['peak_score']:.2f}, mic level median {db(np.median(levels)):.0f} dBFS, "
                   f"loudest {db(levels.max()):.0f} dBFS")
+            if self._pb["audio"]:
+                try:
+                    os.makedirs(config.DEBUG_AUDIO_DIR, exist_ok=True)
+                    path = os.path.join(config.DEBUG_AUDIO_DIR,
+                                        datetime.now().strftime("playback_%H%M%S.wav"))
+                    with wave.open(path, "wb") as wf:
+                        wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(16000)
+                        wf.writeframes(np.concatenate(self._pb["audio"]).tobytes())
+                    print(f"[wakeword] saved what the mic heard while Deo spoke: {path}")
+                except Exception as e:
+                    print(f"[wakeword] couldn't save playback audio: {e}")
             self._pb = None
 
     def _confirm(self, stream) -> bool:

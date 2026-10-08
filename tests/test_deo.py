@@ -542,6 +542,60 @@ def test_conversation_survives_restart():
     os.remove(config.CONVERSATION_FILE)
 
 
+def test_timers():
+    print("\ntimers and reminders")
+    from deo import timers
+    import tempfile, time as _time
+    timers.config.TIMERS_FILE = os.path.join(tempfile.gettempdir(), "deo_test_timers.json")
+    if os.path.exists(timers.config.TIMERS_FILE):
+        os.remove(timers.config.TIMERS_FILE)
+    timers._items.clear()
+    timers._loaded = False
+
+    r = timers.set_timer(minutes=10, label="pasta")
+    check("set a 10 minute timer", r["success"] and "10 minutes" in r["message"], r["message"])
+    r = timers.set_reminder("call mom", at="6:30 pm")
+    check("set a clock-time reminder", r["success"] and "call mom" in r["message"], r["message"])
+    check("bad times are refused, not guessed", not timers.set_reminder("x", at="half past banana")["success"])
+    check("listing shows both", "pasta" in timers.list_timers()["message"]
+          and "call mom" in timers.list_timers()["message"])
+
+    timers._items.clear(); timers._loaded = False
+    check("timers survive a restart",
+          "pasta" in timers.list_timers()["message"], timers.list_timers()["message"])
+    check("cancel by name", timers.cancel_timer("pasta")["success"]
+          and "pasta" not in timers.list_timers()["message"])
+
+    for when, want in (("18:30", (18, 30)), ("6:30 pm", (18, 30)), ("6am", (6, 0)), ("12 am", (0, 0))):
+        got = timers._parse_clock(when)
+        check(f"parses {when!r}", got and (got.hour, got.minute) == want, str(got))
+
+    fired = []
+    timers.on_fire = fired.append
+    timers._items[:] = [{"id": "t1", "kind": "timer", "label": "tea", "due": _time.time() - 1, "created": 0}]
+    due = [i for i in timers._items if i["due"] <= _time.time()]
+    for item in due:
+        timers._items.remove(item)
+        timers.on_fire(timers._announce(item))
+    check("a due timer is announced", fired == ["Your tea timer is done."], str(fired))
+    check("the date/time tool answers", timers.get_date_time()["success"])
+    os.remove(timers.config.TIMERS_FILE)
+
+
+def test_interrupted_reply_is_remembered():
+    print("\ninterrupted replies are remembered")
+    brain = Brain()
+    brain.history.append({"role": "user", "content": "Tell me about football."})
+    brain.record_interrupted("Football began in medieval England.")
+    last = brain.history[-1]
+    check("what was said before the interruption is kept",
+          last["role"] == "assistant" and last["content"].startswith("Football began in medieval England."))
+    check("and it's marked as cut off", "interrupted" in last["content"])
+    before = len(brain.history)
+    brain.record_interrupted("")
+    check("an interruption before anything was said adds nothing", len(brain.history) == before)
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -649,7 +703,8 @@ def main():
                  test_history, test_tool_loop, test_command_safety,
                  test_gesture_swipe, test_echo_rejection, test_wake_debounce, test_wake_verifier,
                  test_kokoro_fallback, test_everything_compiles, test_finger_poses, test_code_never_spoken, test_barge_in, test_code_file_newlines, test_game_mode_and_barge_in_verifier, test_prompt_echo,
-                 test_conversation_survives_restart,
+                 test_conversation_survives_restart, test_timers,
+                 test_interrupted_reply_is_remembered,
                  test_vad):
         try:
             test()

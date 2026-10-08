@@ -303,6 +303,19 @@ class Brain:
             self.history += [{"role": m["role"], "content": m["content"]} for m in messages]
             print(f"[brain] picked up the conversation where it left off ({len(messages)} messages)")
 
+    def record_interrupted(self, spoken: str):
+        """Called when you cut Deo off mid-reply. The reply is normally only
+        stored once it's finished, so an interrupted one vanished: "okay,
+        you can continue" got "continue what?". Store what was actually said,
+        marked as cut off, so the model can pick up from that point."""
+        spoken = (spoken or "").strip()
+        if not spoken:
+            return
+        self.history.append({"role": "assistant",
+                             "content": spoken + " [I was interrupted here by the user.]"})
+        self._trim_history()
+        self._save_conversation()
+
     def _save_conversation(self):
         path = getattr(config, "CONVERSATION_FILE", "")
         if not path:

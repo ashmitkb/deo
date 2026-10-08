@@ -49,6 +49,27 @@ providers); ignore its "migration order" section.
   mixed up directions because the wind-up before a swipe is itself a small
   swipe the other way. Also fixed: an `IsZoomed` crash, moving Windows panels
   and the desktop itself, and the Deo window getting stuck as the target.
+- **Brain switches by game mode** (`deo/gamemode.py`): `qwen3.5:9b` normally
+  (35-41 tok/s next to GPU Whisper), `qwen3:4b` while a game runs from a
+  Steam/Epic/EA library, with the 9B unloaded within ~10s so the game gets
+  the VRAM.
+- **Barge-in works with the speakers on.** Saying "hey Deo" mid-answer stops
+  it. The verifier trusts the wake model when Whisper only hears Deo's own
+  voice. Recorded mic audio showed Deo's playback reaching the mic at about
+  -52 dBFS and the user's "hey Deo" at -8 to -14, so no echo cancellation was
+  needed. (WebRTC AEC via `livekit` was tried and hurt double-talk detection
+  in simulation, 12/12 -> 6/12.) An interrupted reply is kept in history, so
+  "continue" resumes it.
+- **Follow-ups only answer speech meant for Deo:** a one-word local-model check
+  (~0.5s) stops it answering phone calls and side conversations.
+- **Conversation survives restarts** (`deo/conversation.json`, 12 messages, 6h).
+- **Timers, reminders, date/time** (`deo/timers.py`), persisted and spoken.
+- **Speech never reads markdown or code aloud.** The model is told to search
+  for facts rather than recall them.
+- **Gestures need a deliberate pose:** upright, still, held 0.8s. Scratching
+  your face no longer counts as "1".
+- **Starts with Windows:** Startup shortcut -> `pythonw run_deo.pyw`, log in
+  `logs/deo.log`. A named mutex keeps it to one copy.
 - Wallpaper Engine keeps the GPU at ~90% with Deo idle. Pause it while gaming
   or using Deo, or set it to pause when other apps are fullscreen/focused.
 

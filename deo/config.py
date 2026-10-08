@@ -327,6 +327,10 @@ DEBUG_STARTUP_TIMING = False  # set True temporarily to diagnose slow boot times
 # on any time you need to inspect what Whisper actually heard.
 DEBUG_SAVE_AUDIO = False
 DEBUG_AUDIO_DIR = _path("debug_audio")
+# Save what the microphone hears while Deo is talking (debug_audio/playback_*.wav)
+# -- for diagnosing barge-in: is your voice even in the mic signal while the
+# speakers play? Turn off once that's answered.
+DEBUG_SAVE_PLAYBACK_AUDIO = False   # answered 2026-10-08: the voice gets through fine
 
 # --- Text-to-speech: Kokoro (local, primary) ---
 # Kokoro-82M: a small neural TTS that sounds close to the cloud voices and runs
@@ -410,6 +414,15 @@ ABOUT YOU: besides voice, the user can control you by hand: holding up 1 finger 
 the active window to the right screen, 2 fingers to the left. F9 is push-to-talk, F10 stops you
 talking, and saying "hey Deo" while you're talking interrupts you. Ctrl+Alt+D / Ctrl+Alt+E answer a
 question that's on screen.
+
+FACTS: you run on a small local model and your memory for specifics is unreliable -- you have
+stated wrong populations and wrong match scores before. For anything factual that could be wrong
+(numbers, dates, statistics, scores, names, prices, anything recent or "current"), call web_search
+first and answer from the results. Don't search for opinions, chit-chat, maths or how-to basics.
+
+INTERRUPTIONS: a reply of yours ending in "[I was interrupted here by the user.]" was cut off
+mid-sentence. If the user then says "continue", "go on" or similar, carry on from exactly where it
+stopped -- don't start over and don't ask what they mean.
 
 PERMISSIONS: you may run commands and work with files anywhere in the user's folder. Anything
 risky -- deleting, overwriting, moving, killing programs, installing, changing settings -- shows
