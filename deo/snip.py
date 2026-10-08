@@ -3,7 +3,8 @@ Screenshot-style area picker: "hey Deo, look at this -- what is it?"
 
     python -m deo.snip --out C:\\path\\pick.png
         exit 0 -> the selected area was saved to --out; prints its bounds as JSON
-        exit 1 -> cancelled (Esc, right-click, or 60s with no selection)
+        exit 3 -> cancelled (Esc, right-click, or 60s with no selection)
+        anything else -> it crashed (the caller reports that, not "cancelled")
 
 Runs as its own process (tools.look_at_region starts it) so it can own a
 fullscreen Tk window on its own main thread, independent of Deo's window.
@@ -15,6 +16,8 @@ click instead of a drag picks the whole monitor under the cursor.
 
 import argparse
 import ctypes
+import ctypes.wintypes   # here, not inside main(): importing it in the function made
+                         # "ctypes" a local name there and crashed the picker on start
 import json
 import sys
 import tkinter as tk
@@ -103,7 +106,6 @@ def main():
     def cancel(_=None):
         root.destroy()
 
-    import ctypes.wintypes  # noqa: F401  (POINT, used above)
     cv.bind("<ButtonPress-1>", on_down)
     cv.bind("<B1-Motion>", on_drag)
     cv.bind("<ButtonRelease-1>", on_up)
@@ -114,7 +116,7 @@ def main():
     root.mainloop()
 
     if state["result"] is None:
-        return 1
+        return 3                      # cancelled -- distinct from a crash (exit 1)
     print(json.dumps(state["result"]))
     return 0
 

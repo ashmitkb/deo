@@ -709,8 +709,13 @@ def look_at_region(question: str = "") -> dict:
                               cwd=config.PROJECT_ROOT, capture_output=True, text=True, timeout=90)
     except subprocess.TimeoutExpired:
         return {"success": False, "message": "The selection timed out."}
-    if proc.returncode != 0 or not os.path.exists(out):
+    if proc.returncode == 3:
         return {"success": False, "message": "The user cancelled the selection -- say so briefly."}
+    if proc.returncode != 0 or not os.path.exists(out):
+        # A crash used to come back as "cancelled", which hid a real bug.
+        print(f"[tools] area picker failed (exit {proc.returncode}): {(proc.stderr or '').strip()[-600:]}")
+        return {"success": False, "message": "The screen picker failed to open -- tell the user it's a bug "
+                                             "and that the details are in Deo's log."}
     from .screen_qa import look_at_image_file
     return look_at_image_file(out, question)
 
