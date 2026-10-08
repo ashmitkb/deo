@@ -41,7 +41,9 @@ def main():
     root = tk.Tk()
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.geometry(f"{vw}x{vh}{vx:+d}{vy:+d}")
+    # "+-2560+0", not "-2560+0": in Tk a bare minus means "from the RIGHT edge",
+    # which put the picker off-screen when the left monitor starts at x=-2560
+    root.geometry(f"{vw}x{vh}+{vx}+{vy}")
     root.configure(cursor="crosshair", bg="black")
     cv = tk.Canvas(root, width=vw, height=vh, highlightthickness=0, bd=0, cursor="crosshair")
     cv.pack()
