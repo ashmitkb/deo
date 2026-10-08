@@ -492,9 +492,10 @@ def test_game_mode_and_barge_in_verifier():
     BS = chr(92)
     lib = "C:" + BS + "Program Files (x86)" + BS + "Steam" + BS + "steamapps" + BS + "common" + BS
     fake = {"exes": []}
-    original = gamemode._running_exes
+    original, original_fs = gamemode._running_exes, gamemode._fullscreen_app
     try:
         gamemode._running_exes = lambda: fake["exes"]
+        gamemode._fullscreen_app = lambda: ""     # don't let a real fullscreen game leak in
         def model_with(*exes):
             fake["exes"] = list(exes)
             gamemode._cache = (0.0, False, "")
@@ -505,8 +506,13 @@ def test_game_mode_and_barge_in_verifier():
               model_with(lib + "wallpaper_engine" + BS + "wallpaper64.exe") == config.OLLAMA_MODEL)
         check("Steam itself doesn't count as gaming",
               model_with("C:" + BS + "Program Files (x86)" + BS + "Steam" + BS + "steam.exe") == config.OLLAMA_MODEL)
+        check("a game in C:/Games (RDR2) -> 4B",
+              model_with("C:" + BS + "Games" + BS + "Red Dead Redemption 2" + BS + "RDR2.exe")
+              == config.OLLAMA_MODEL_GAMING)
+        gamemode._fullscreen_app = lambda: "D:" + BS + "Anywhere" + BS + "game.exe"
+        check("any fullscreen non-browser app -> 4B", model_with() == config.OLLAMA_MODEL_GAMING)
     finally:
-        gamemode._running_exes = original
+        gamemode._running_exes, gamemode._fullscreen_app = original, original_fs
         gamemode._cache = (0.0, False, "")
 
     reply = "India is a diverse country with a rich and complex cultural heritage."

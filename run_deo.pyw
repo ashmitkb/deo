@@ -29,4 +29,4 @@ sys.stdout = sys.stderr = log
 
 import main  # noqa: E402
 
-main.main()
+main.main(start_hidden="--hidden" in sys.argv)

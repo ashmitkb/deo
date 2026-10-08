@@ -21,7 +21,10 @@ from . import config
 
 _LIBRARY_MARKERS = ("\\steamapps\\common\\", "\\epic games\\", "\\ea games\\",
                     "\\ubisoft game launcher\\games\\", "\\gog galaxy\\games\\",
-                    "\\xboxgames\\")
+                    "\\xboxgames\\",
+                    # Standalone installs like C:\Games\Red Dead Redemption 2 --
+                    # missed until this was added, while RDR2 was running.
+                    "\\games\\")
 # Things that live in those folders but aren't games you're playing.
 _NOT_GAMES = ("wallpaper_engine", "wallpaper32", "wallpaper64", "launcher", "epicgameslauncher",
               "directxredist", "redist", "steamworks shared", "crashreport", "easyanticheat",
@@ -43,6 +46,37 @@ def _running_exes() -> list:
     return [exe for exe in (_process_exe(pids[i]) for i in range(count)) if exe]
 
 
+# Fullscreen apps that are NOT games.
+_FULLSCREEN_OK = {"brave.exe", "chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "arc.exe",
+                  "vlc.exe", "mpc-hc64.exe", "wmplayer.exe", "media.player.exe", "powerpnt.exe",
+                  "code.exe", "pycharm64.exe", "explorer.exe", "applicationframehost.exe",
+                  "obs64.exe", "resolve.exe", "python.exe", "pythonw.exe"}
+
+
+def _fullscreen_app() -> str:
+    """Exe of the foreground window if it covers its whole monitor and isn't
+    a browser/video/editor -- i.e. almost certainly a game, wherever it's
+    installed."""
+    try:
+        import win32api
+        import win32gui
+        import win32process
+        from .tools import _process_exe, _per_monitor_dpi
+        with _per_monitor_dpi():
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd or win32gui.GetClassName(hwnd) in ("Progman", "WorkerW", "Shell_TrayWnd"):
+                return ""
+            rect = win32gui.GetWindowRect(hwnd)
+            mon = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd, 2))["Monitor"]
+        if rect[0] > mon[0] or rect[1] > mon[1] or rect[2] < mon[2] or rect[3] < mon[3]:
+            return ""
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        exe = _process_exe(pid)
+        return "" if not exe or os.path.basename(exe).lower() in _FULLSCREEN_OK else exe
+    except Exception:
+        return ""
+
+
 def running_game() -> str:
     """Path of a running game, or "" if none. Cached for a few seconds."""
     global _cache
@@ -59,6 +93,8 @@ def running_game() -> str:
                                  and not any(n in low for n in _NOT_GAMES)):
                 game = exe
                 break
+        if not game:
+            game = _fullscreen_app()
         _cache = (time.monotonic(), bool(game), game)
         return game
 

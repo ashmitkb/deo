@@ -7,6 +7,7 @@ nvidia-cublas-cu12>=12.8  # GPU Whisper on the RTX 5060 -- 12.4 can't run int8 o
 nvidia-cudnn-cu12
 kokoro-onnx           # local TTS voice. Model files go in deo/kokoro/ -- see README
 livekit               # WebRTC echo canceller -- installed, evaluated, not currently used
+pystray               # tray icon (show/hide, pause listening, quit)
 openwakeword          # local wake word
 groq                  # cloud LLM + STT + TTS (all optional at runtime)
 ollama                # local LLM fallback, and the screen-QA vision model

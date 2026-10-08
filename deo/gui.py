@@ -1,132 +1,356 @@
 """
-Minimal desktop GUI for Deo -- replaces the raw console as the interaction
-surface so tool-call/reasoning noise doesn't leak into what the user sees.
+Deo's desktop window.
 
 IMPORTANT THREADING RULE: Tkinter widgets may only be touched from the
 thread running root.mainloop(). Everything else (voice loop, wake-word
-listener, screen QA) runs on background threads exactly as before; they
-must talk to this GUI ONLY through the thread-safe push_* methods below,
-which drop events onto a queue.Queue(). The GUI drains that queue on a
-root.after() timer running on the main thread. Never call any other method
-on DeoGUI from a background thread.
+listener, screen QA, timers, the tray icon) runs on background threads; they
+must talk to this GUI ONLY through the thread-safe push_* / request_* methods,
+which drop events onto a queue.Queue() drained by a root.after() timer.
 
-Usage (see main.py):
-    gui = DeoGUI(on_text_submit=..., on_stop=...)
-    threading.Thread(target=background_work, args=(gui,), daemon=True).start()
-    gui.run()   # blocks on the Tk mainloop until the window is closed
+Layout:
+    header  -- animated orb (idle / listening / thinking / speaking), name,
+               status, and an info line (brain model, paused, next timer)
+    chat    -- rounded message bubbles on a scrollable canvas
+    footer  -- pause / stop buttons, rounded input, send
+
+Closing the window hides it (Deo keeps listening); quitting is done from the
+tray icon, or the window closes for real if no tray is running.
 """
 
+import ctypes
+import math
 import queue
+import random
 import threading
+import time
 import tkinter as tk
-from tkinter import scrolledtext, font as tkfont
+from tkinter import font as tkfont
 
-# --- Colors (dark theme) ---
-BG = "#1a1a1f"
-PANEL_BG = "#232329"
-INPUT_BG = "#2a2a31"
-USER_ACCENT = "#5b8cff"
-TEXT_PRIMARY = "#f2f2f5"
-TEXT_MUTED = "#8b8b96"
-ACCENT = "#5eead4"
+# --- palette ------------------------------------------------------------
+BG = "#0f1117"
+SURFACE = "#171a23"
+SURFACE_2 = "#1f2330"
+BORDER = "#2a2f3d"
+TEXT = "#eef0f6"
+TEXT_DIM = "#8a90a2"
+TEXT_FAINT = "#5c6273"
+USER_BUBBLE = "#3b6cf6"
+USER_TEXT = "#ffffff"
+DEO_BUBBLE = "#1f2330"
+DANGER = "#f0616d"
 
-STATUS_COLORS = {
-    "idle": "#565660",
-    "listening": "#5eead4",
-    "thinking": "#f5b94d",
-    "speaking": "#7c6cf7",
-    "error": "#f16565",
+STATES = {
+    #            core       glow        label
+    "idle":      ("#4b5266", "#2b3040", "Idle -- say \"hey Deo\""),
+    "listening": ("#2dd4bf", "#0f5f57", "Listening..."),
+    "thinking":  ("#f5b94d", "#6b4d14", "Thinking..."),
+    "speaking":  ("#8b7cf8", "#3b2f8c", "Speaking..."),
+    "paused":    ("#3a3f4f", "#22262f", "Paused -- not listening"),
+    "error":     (DANGER,    "#5c1d24", "Something went wrong"),
 }
-STATUS_LABELS = {
-    "idle": "Idle",
-    "listening": "Listening...",
-    "thinking": "Thinking...",
-    "speaking": "Speaking...",
-    "error": "Error",
-}
+
+FONT_FAMILY = "Segoe UI Variable Text"
 
 
+def _mix(c1: str, c2: str, t: float) -> str:
+    """Blend two #rrggbb colours; t=0 -> c1, t=1 -> c2."""
+    t = max(0.0, min(1.0, t))
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(a, b))
+
+
+def _rounded_rect(canvas, x1, y1, x2, y2, r, **kw):
+    r = max(0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+           x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return canvas.create_polygon(pts, smooth=True, **kw)
+
+
+def make_icon_image(size=64, color="#8b7cf8"):
+    """The orb as a PIL image -- shared by the window icon and the tray."""
+    from PIL import Image, ImageDraw, ImageFilter
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(glow)
+    c = tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
+    d.ellipse([size * .12, size * .12, size * .88, size * .88], fill=c + (150,))
+    glow = glow.filter(ImageFilter.GaussianBlur(size * .08))
+    img.alpha_composite(glow)
+    d = ImageDraw.Draw(img)
+    d.ellipse([size * .24, size * .24, size * .76, size * .76], fill=c + (255,))
+    d.ellipse([size * .34, size * .3, size * .5, size * .44], fill=(255, 255, 255, 90))
+    return img
+
+
+# --- the animated orb ---------------------------------------------------
+class Orb(tk.Canvas):
+    SIZE = 60
+
+    def __init__(self, parent):
+        super().__init__(parent, width=self.SIZE, height=self.SIZE, bg=SURFACE,
+                         highlightthickness=0)
+        self.state = "idle"
+        self._t0 = time.monotonic()
+        self._level = 0.0
+        self._tick()
+
+    def set_state(self, state):
+        if state != self.state:
+            self.state = state
+            self._t0 = time.monotonic()
+
+    def _tick(self):
+        self.delete("all")
+        core, glow, _ = STATES.get(self.state, STATES["idle"])
+        t = time.monotonic() - self._t0
+        cx = cy = self.SIZE / 2
+        if self.state == "listening":
+            for k in range(3):                       # ripples spreading out
+                p = ((t * 0.9) + k / 3) % 1.0
+                r = 12 + p * 17
+                self.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                 outline=_mix(core, SURFACE, p), width=2)
+            r = 12 + math.sin(t * 4) * 1.2
+        elif self.state == "thinking":
+            self.create_oval(cx - 22, cy - 22, cx + 22, cy + 22, outline=_mix(glow, SURFACE, .3), width=3)
+            self.create_arc(cx - 22, cy - 22, cx + 22, cy + 22, start=-t * 300 % 360, extent=100,
+                            style="arc", outline=core, width=3)
+            r = 11
+        elif self.state == "speaking":
+            target = random.uniform(0.25, 1.0)        # a voice-like jitter
+            self._level += (target - self._level) * 0.35
+            g = 14 + self._level * 13
+            self.create_oval(cx - g, cy - g, cx + g, cy + g, fill=_mix(glow, SURFACE, .45), outline="")
+            r = 11 + self._level * 4
+        else:                                         # idle / paused: slow breathing
+            b = (math.sin(t * 1.4) + 1) / 2
+            g = 16 + b * 5
+            self.create_oval(cx - g, cy - g, cx + g, cy + g, fill=_mix(glow, SURFACE, .55 - b * .2), outline="")
+            r = 11 + b * 1.5
+        self.create_oval(cx - r, cy - r, cx + r, cy + r, fill=core, outline="")
+        self.create_oval(cx - r * .55, cy - r * .7, cx - r * .05, cy - r * .2,
+                         fill=_mix(core, "#ffffff", .45), outline="")
+        self.after(33, self._tick)
+
+
+# --- scrollable chat of bubbles -----------------------------------------
+class ChatView(tk.Frame):
+    MAX_MESSAGES = 200
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=BG)
+        self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0, bd=0)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self._messages = []          # (kind, who, text, stamp)
+        self._width = 420
+        self._body = tkfont.Font(family=FONT_FAMILY, size=11)
+        self._meta = tkfont.Font(family=FONT_FAMILY, size=8)
+        self._who = tkfont.Font(family=FONT_FAMILY, size=8, weight="bold")
+        self.canvas.bind("<Configure>", self._on_resize)
+        self.canvas.bind_all("<MouseWheel>", self._on_wheel)
+
+    def add(self, kind, who, text):
+        self._messages.append((kind, who, text, time.strftime("%H:%M")))
+        self._messages = self._messages[-self.MAX_MESSAGES:]
+        self._render()
+
+    def _on_resize(self, event):
+        if abs(event.width - self._width) > 2:
+            self._width = event.width
+            self._render()
+
+    def _on_wheel(self, event):
+        self.canvas.yview_scroll(int(-event.delta / 120) * 3, "units")
+
+    def _render(self):
+        c = self.canvas
+        at_bottom = c.yview()[1] > 0.98 or not c.find_all()
+        c.delete("all")
+        w = max(self._width, 280)
+        max_text = int(w * 0.72)
+        y = 16
+        for kind, who, text, stamp in self._messages:
+            if kind == "system":
+                t = c.create_text(w / 2, y + 12, text=text, fill=TEXT_DIM, font=self._meta,
+                                  width=int(w * 0.8), justify="center")
+                x1, y1, x2, y2 = c.bbox(t)
+                pill = _rounded_rect(c, x1 - 12, y1 - 5, x2 + 12, y2 + 5, 12, fill=SURFACE, outline="")
+                c.tag_raise(t)
+                y = y2 + 18
+                continue
+            mine = kind == "user"
+            pad_x, pad_y, margin = 14, 10, 16
+            t = c.create_text(0, 0, text=text, font=self._body, width=max_text, anchor="nw",
+                              fill=USER_TEXT if mine else TEXT)
+            x1, y1, x2, y2 = c.bbox(t)
+            bw, bh = (x2 - x1) + pad_x * 2, (y2 - y1) + pad_y * 2
+            bx1 = w - margin - bw if mine else margin
+            label = c.create_text(bx1 + (bw if mine else 0), y, text=f"{who}  ·  {stamp}",
+                                  anchor="ne" if mine else "nw", font=self._meta, fill=TEXT_FAINT)
+            ly2 = c.bbox(label)[3]
+            by1 = ly2 + 4
+            _rounded_rect(c, bx1, by1, bx1 + bw, by1 + bh, 16,
+                          fill=USER_BUBBLE if mine else DEO_BUBBLE, outline="")
+            c.coords(t, bx1 + pad_x, by1 + pad_y)
+            c.tag_raise(t)
+            y = by1 + bh + 14
+        c.configure(scrollregion=(0, 0, w, y + 8))
+        if at_bottom:
+            c.yview_moveto(1.0)
+
+
+# --- flat rounded button -------------------------------------------------
+class PillButton(tk.Canvas):
+    def __init__(self, parent, text, command, bg, fg, hover, width=None, height=36, font=None):
+        self._font = font or tkfont.Font(family=FONT_FAMILY, size=10, weight="bold")
+        w = width or self._font.measure(text) + 28
+        super().__init__(parent, width=w, height=height, bg=parent["bg"], highlightthickness=0,
+                         cursor="hand2")
+        self._cmd, self._bg, self._fg, self._hover = command, bg, fg, hover
+        self._text, self._bw, self._bh = text, w, height
+        self._draw(bg)
+        self.bind("<Enter>", lambda e: self._draw(self._hover))
+        self.bind("<Leave>", lambda e: self._draw(self._bg))
+        self.bind("<Button-1>", lambda e: self._cmd and self._cmd())
+
+    def _draw(self, fill):
+        self.delete("all")
+        _rounded_rect(self, 1, 1, self._bw - 1, self._bh - 1, self._bh / 2, fill=fill, outline="")
+        self.create_text(self._bw / 2, self._bh / 2, text=self._text, fill=self._fg, font=self._font)
+
+    def set(self, text=None, bg=None, fg=None, hover=None):
+        self._text = text or self._text
+        self._bg, self._fg, self._hover = bg or self._bg, fg or self._fg, hover or self._hover
+        self._draw(self._bg)
+
+
+# --- the window ----------------------------------------------------------
 class DeoGUI:
-    def __init__(self, assistant_name="Deo", on_text_submit=None, on_stop=None):
+    def __init__(self, assistant_name="Deo", on_text_submit=None, on_stop=None,
+                 on_pause_toggle=None, start_hidden=False):
         """
-        on_text_submit: callable(text: str), called on a NEW background thread
-            whenever the user types a message and hits Send/Enter. Do not do
-            slow work (brain.ask, TTS) here on the caller's thread -- this
-            class already spawns a thread per submission for you.
-        on_stop: callable(), called on the main thread when Stop is clicked.
-            Keep it fast (e.g. sd.stop()) -- it runs during a GUI event.
+        on_text_submit: callable(text), run on a NEW background thread per message.
+        on_stop: callable(), run on the main thread when Stop is clicked -- keep it fast.
+        on_pause_toggle: callable() -> bool (new paused state), main thread.
         """
         self._queue = queue.Queue()
         self._on_text_submit = on_text_submit
         self._on_stop = on_stop
+        self._on_pause_toggle = on_pause_toggle
         self._assistant_name = assistant_name
+        self._paused = False
+        self._status = "idle"
+        self.tray_active = False      # set by the tray: closing then hides instead of quitting
 
         self.root = tk.Tk()
+        if start_hidden:
+            # Withdraw BEFORE the window is ever mapped. Withdrawing later (after
+            # the tray started) still let Windows show it for an instant and hand
+            # it keyboard focus -- stealing focus from a fullscreen game.
+            self.root.withdraw()
         self.root.title(assistant_name)
-        self.root.geometry("420x620")
-        self.root.configure(bg=BG)
+        self.root.geometry("460x720")
         self.root.minsize(360, 480)
-
-        self._build_layout()
+        self.root.configure(bg=BG)
+        self._set_icon()
+        self._build()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(50, self._dark_title_bar)
         self._poll_queue()
 
-    # ---- layout (main thread only) ----
-    def _build_layout(self):
-        header = tk.Frame(self.root, bg=PANEL_BG, height=56)
+    # ---- window chrome --------------------------------------------------
+    def _set_icon(self):
+        try:
+            from PIL import ImageTk
+            self._icon = ImageTk.PhotoImage(make_icon_image(64))
+            self.root.iconphoto(True, self._icon)
+        except Exception:
+            pass
+
+    def _dark_title_bar(self):
+        """Windows 11 dark title bar, so the chrome matches the window."""
+        try:
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            on = ctypes.c_int(1)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(on), ctypes.sizeof(on))
+            color = ctypes.c_int(int(SURFACE[5:7] + SURFACE[3:5] + SURFACE[1:3], 16))  # COLORREF is BGR
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))
+        except Exception:
+            pass
+
+    # ---- layout -----------------------------------------------------------
+    def _build(self):
+        header = tk.Frame(self.root, bg=SURFACE)
         header.pack(side="top", fill="x")
-        header.pack_propagate(False)
+        self._orb = Orb(header)
+        self._orb.pack(side="left", padx=(16, 12), pady=12)
+        text_col = tk.Frame(header, bg=SURFACE)
+        text_col.pack(side="left", fill="x", expand=True)
+        tk.Label(text_col, text=self._assistant_name, bg=SURFACE, fg=TEXT,
+                 font=(FONT_FAMILY, 16, "bold"), anchor="w").pack(fill="x", pady=(12, 0))
+        self._status_label = tk.Label(text_col, text=STATES["idle"][2], bg=SURFACE, fg=STATES["idle"][0],
+                                      font=(FONT_FAMILY, 10), anchor="w")
+        self._status_label.pack(fill="x")
+        self._info_label = tk.Label(text_col, text="", bg=SURFACE, fg=TEXT_FAINT,
+                                    font=(FONT_FAMILY, 8), anchor="w")
+        self._info_label.pack(fill="x", pady=(0, 10))
+        tk.Frame(self.root, bg=BORDER, height=1).pack(side="top", fill="x")
 
-        title_font = tkfont.Font(family="Segoe UI", size=13, weight="bold")
-        tk.Label(header, text=self._assistant_name, bg=PANEL_BG, fg=TEXT_PRIMARY,
-                 font=title_font).pack(side="left", padx=16)
+        footer = tk.Frame(self.root, bg=SURFACE)
+        footer.pack(side="bottom", fill="x")
+        tk.Frame(self.root, bg=BORDER, height=1).pack(side="bottom", fill="x")
 
-        status_frame = tk.Frame(header, bg=PANEL_BG)
-        status_frame.pack(side="right", padx=(0, 8))
-        self._status_dot = tk.Canvas(status_frame, width=10, height=10, bg=PANEL_BG, highlightthickness=0)
-        self._status_dot_id = self._status_dot.create_oval(1, 1, 9, 9, fill=STATUS_COLORS["idle"], outline="")
-        self._status_dot.pack(side="left", padx=(0, 6))
-        self._status_label = tk.Label(status_frame, text=STATUS_LABELS["idle"], bg=PANEL_BG,
-                                       fg=TEXT_MUTED, font=("Segoe UI", 10))
-        self._status_label.pack(side="left")
+        controls = tk.Frame(footer, bg=SURFACE)
+        controls.pack(fill="x", padx=14, pady=(10, 0))
+        small = tkfont.Font(family=FONT_FAMILY, size=9, weight="bold")
+        self._pause_btn = PillButton(controls, "Pause listening", self._handle_pause,
+                                     SURFACE_2, TEXT_DIM, BORDER, height=30, font=small)
+        self._pause_btn.pack(side="left")
+        PillButton(controls, "Stop talking", self._handle_stop, "#2a1a1f", "#f3a3ab", "#3a2128",
+                   height=30, font=small).pack(side="left", padx=(8, 0))
+        tk.Label(controls, text="1 finger → right  ·  2 fingers ← left", bg=SURFACE, fg=TEXT_FAINT,
+                 font=(FONT_FAMILY, 8)).pack(side="right")
 
-        stop_btn = tk.Button(header, text="Stop", command=self._handle_stop,
-                              bg="#3a2020", fg="#f0a0a0", activebackground="#4a2828",
-                              activeforeground="#f5b0b0", relief="flat", padx=10, pady=2,
-                              font=("Segoe UI", 9), cursor="hand2")
-        stop_btn.pack(side="right", padx=(0, 12))
-
-        self._transcript = scrolledtext.ScrolledText(
-            self.root, bg=BG, fg=TEXT_PRIMARY, insertbackground=TEXT_PRIMARY,
-            relief="flat", wrap="word", font=("Segoe UI", 10), padx=14, pady=12,
-            state="disabled", borderwidth=0,
-        )
-        self._transcript.pack(side="top", fill="both", expand=True)
-        self._transcript.tag_config("user", foreground=TEXT_PRIMARY, justify="right",
-                                     lmargin1=50, lmargin2=50, spacing3=14)
-        self._transcript.tag_config("assistant", foreground=TEXT_PRIMARY, justify="left",
-                                     rmargin=50, spacing3=14)
-        self._transcript.tag_config("user_label", foreground=USER_ACCENT,
-                                     font=("Segoe UI", 8, "bold"), justify="right")
-        self._transcript.tag_config("assistant_label", foreground=ACCENT,
-                                     font=("Segoe UI", 8, "bold"), justify="left")
-        self._transcript.tag_config("system", foreground=TEXT_MUTED,
-                                     font=("Segoe UI", 9, "italic"), justify="center")
-
-        input_row = tk.Frame(self.root, bg=PANEL_BG)
-        input_row.pack(side="bottom", fill="x")
-        self._entry = tk.Entry(input_row, bg=INPUT_BG, fg=TEXT_PRIMARY, insertbackground=TEXT_PRIMARY,
-                                relief="flat", font=("Segoe UI", 10))
-        self._entry.pack(side="left", fill="x", expand=True, padx=(12, 8), pady=10, ipady=6)
+        row = tk.Frame(footer, bg=SURFACE)
+        row.pack(fill="x", padx=14, pady=12)
+        self._input_canvas = tk.Canvas(row, height=44, bg=SURFACE, highlightthickness=0)
+        self._input_canvas.pack(side="left", fill="x", expand=True)
+        self._entry = tk.Entry(self._input_canvas, bg=SURFACE_2, fg=TEXT, insertbackground=TEXT,
+                               relief="flat", font=(FONT_FAMILY, 11), bd=0)
+        self._entry_win = self._input_canvas.create_window(18, 22, window=self._entry, anchor="w")
+        self._input_canvas.bind("<Configure>", self._layout_input)
         self._entry.bind("<Return>", self._handle_submit)
-        send_btn = tk.Button(input_row, text="Send", command=self._handle_submit,
-                              bg=USER_ACCENT, fg="white", activebackground="#3f6fe0",
-                              relief="flat", padx=14, font=("Segoe UI", 9, "bold"), cursor="hand2")
-        send_btn.pack(side="right", padx=(0, 12), pady=10)
+        self._placeholder(True)
+        self._entry.bind("<FocusIn>", lambda e: self._placeholder(False))
+        self._entry.bind("<FocusOut>", lambda e: self._placeholder(not self._entry.get()))
+        PillButton(row, "➤", self._handle_submit, USER_BUBBLE, "#ffffff", "#5583ff",
+                   width=44, height=44, font=tkfont.Font(family=FONT_FAMILY, size=13)).pack(side="right", padx=(10, 0))
 
-        self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
+        self._chat = ChatView(self.root)
+        self._chat.pack(side="top", fill="both", expand=True)
 
-    # ---- event handlers (main thread only, fired by Tk) ----
+    def _layout_input(self, event):
+        c = self._input_canvas
+        c.delete("pill")
+        _rounded_rect(c, 1, 1, event.width - 1, 43, 21, fill=SURFACE_2, outline=BORDER, tags="pill")
+        c.tag_lower("pill")
+        c.itemconfigure(self._entry_win, width=event.width - 36)
+
+    def _placeholder(self, show):
+        if show and not self._entry.get():
+            self._entry.insert(0, "Type a message...")
+            self._entry.configure(fg=TEXT_FAINT)
+            self._has_placeholder = True
+        elif not show and getattr(self, "_has_placeholder", False):
+            self._entry.delete(0, tk.END)
+            self._entry.configure(fg=TEXT)
+            self._has_placeholder = False
+
+    # ---- event handlers (main thread) -----------------------------------
     def _handle_submit(self, event=None):
+        if getattr(self, "_has_placeholder", False):
+            return
         text = self._entry.get().strip()
         if not text:
             return
@@ -139,20 +363,54 @@ class DeoGUI:
         if self._on_stop:
             self._on_stop()
 
-    # ---- thread-safe public API: call these from ANY thread ----
-    def push_user_message(self, text: str):
+    def _handle_pause(self):
+        if self._on_pause_toggle:
+            self._set_paused(self._on_pause_toggle())
+
+    def _set_paused(self, paused):
+        self._paused = bool(paused)
+        if self._paused:
+            self._pause_btn.set("Resume listening", bg="#1d3b36", fg="#7ff0de", hover="#24504a")
+        else:
+            self._pause_btn.set("Pause listening", bg=SURFACE_2, fg=TEXT_DIM, hover=BORDER)
+        self._render_status(self._status)
+
+    def _on_close(self):
+        if self.tray_active:
+            self.root.withdraw()      # keep running in the tray
+        else:
+            self.root.destroy()
+
+    # ---- thread-safe public API -----------------------------------------
+    def push_user_message(self, text):
         self._queue.put(("user", text))
 
-    def push_assistant_message(self, text: str):
+    def push_assistant_message(self, text):
         self._queue.put(("assistant", text))
 
-    def push_system_message(self, text: str):
+    def push_system_message(self, text):
         self._queue.put(("system", text))
 
-    def push_status(self, status: str):
+    def push_status(self, status):
         self._queue.put(("status", status))
 
-    # ---- queue drain + rendering (main thread only, via root.after) ----
+    def push_info(self, text):
+        """Small line under the status: brain model, next timer, etc."""
+        self._queue.put(("info", text))
+
+    def push_paused(self, paused):
+        self._queue.put(("paused", paused))
+
+    def request_show(self):
+        self._queue.put(("show", None))
+
+    def request_toggle_visible(self):
+        self._queue.put(("toggle", None))
+
+    def request_quit(self):
+        self._queue.put(("quit", None))
+
+    # ---- queue drain (main thread) ----------------------------------------
     def _poll_queue(self):
         try:
             while True:
@@ -164,37 +422,39 @@ class DeoGUI:
                 elif kind == "assistant":
                     self.add_assistant_message(payload)
                 elif kind == "system":
-                    self._append_system(payload)
+                    self._chat.add("system", "", payload)
+                elif kind == "info":
+                    self._info_label.configure(text=payload)
+                elif kind == "paused":
+                    self._set_paused(payload)
+                elif kind == "show":
+                    self._show()
+                elif kind == "toggle":
+                    self.root.withdraw() if self.root.winfo_viewable() else self._show()
+                elif kind == "quit":
+                    self.root.destroy()
+                    return
         except queue.Empty:
             pass
         self.root.after(50, self._poll_queue)
 
-    def add_user_message(self, text: str):
-        self._append_bubble("You", text, "user_label", "user")
+    def _show(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
 
-    def add_assistant_message(self, text: str):
-        self._append_bubble(self._assistant_name, text, "assistant_label", "assistant")
+    def add_user_message(self, text):
+        self._chat.add("user", "You", text)
 
-    def _append_bubble(self, who, text, label_tag, body_tag):
-        self._transcript.configure(state="normal")
-        self._transcript.insert("end", f"{who}\n", label_tag)
-        self._transcript.insert("end", f"{text}\n\n", body_tag)
-        self._transcript.configure(state="disabled")
-        self._transcript.see("end")
+    def add_assistant_message(self, text):
+        self._chat.add("assistant", self._assistant_name, text)
 
-    def _append_system(self, text: str):
-        self._transcript.configure(state="normal")
-        self._transcript.insert("end", f"{text}\n\n", "system")
-        self._transcript.configure(state="disabled")
-        self._transcript.see("end")
-
-    def _render_status(self, status: str):
-        color = STATUS_COLORS.get(status, STATUS_COLORS["idle"])
-        label = STATUS_LABELS.get(status, status)
-        self._status_dot.itemconfig(self._status_dot_id, fill=color)
-        self._status_label.configure(text=label)
+    def _render_status(self, status):
+        self._status = status
+        shown = "paused" if self._paused and status == "idle" else status
+        core, _, label = STATES.get(shown, STATES["idle"])
+        self._orb.set_state(shown)
+        self._status_label.configure(text=label, fg=core)
 
     def run(self):
-        """Blocks on the Tk mainloop. Call this from your program's main
-        thread, after background work has been started on other threads."""
         self.root.mainloop()

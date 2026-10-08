@@ -48,6 +48,9 @@ if config.DEBUG_STARTUP_TIMING:
 # listening to you). Kept in step with the GUI status by _status().
 _phase = "idle"
 _conversation_active = threading.Event()
+# Paused from the window or the tray: wake word, gestures and push-to-talk are
+# all ignored until resumed. Typed messages still work.
+_paused = threading.Event()
 _barge_in = threading.Event()
 _current_reply = []
 
@@ -160,6 +163,17 @@ def _deo_just_said_its_name() -> bool:
     return any(mentions_wake_word(s) for s in _current_reply[-2:])
 
 
+def toggle_pause() -> bool:
+    """Flip paused/listening; returns the new paused state."""
+    if _paused.is_set():
+        _paused.clear()
+    else:
+        _paused.set()
+        tts.stop()
+    print(f"[main] {'paused -- not listening' if _paused.is_set() else 'listening again'}")
+    return _paused.is_set()
+
+
 def handle_wake(brain: Brain, gui: DeoGUI):
     """Called from the wake-word listener's thread on every verified wake.
 
@@ -169,6 +183,8 @@ def handle_wake(brain: Brain, gui: DeoGUI):
     mid-sentence, says "Yeah?", and listens to you. Before, the conversation
     ran ON the listener's thread, so nothing heard the wake word until Deo had
     completely finished."""
+    if _paused.is_set():
+        return
     if _phase in ("thinking", "speaking"):
         if _deo_just_said_its_name():
             print("[barge-in] ignored: Deo just said its own name")
@@ -237,6 +253,8 @@ def handle_gesture(direction: str, gui: DeoGUI):
     """Called from the gesture listener's own background thread whenever a
     swipe is detected. Goes straight to the window-move tool -- no brain.ask()
     round-trip -- so a gesture feels instant rather than waiting on Ollama."""
+    if _paused.is_set():
+        return
     gui.push_status("thinking")
     result = move_active_window(direction)
     print(f"[gesture] {result['message']}")
@@ -261,6 +279,8 @@ def voice_loop(brain: Brain, gui: DeoGUI, stop_event: threading.Event):
             wait_for_push_to_talk()
             if stop_event.is_set():
                 break
+            if _paused.is_set():
+                continue
 
             with mic_lock:
                 audio = record_while_held(on_start=lambda: gui.push_status("listening"))
@@ -312,7 +332,9 @@ def _already_running() -> bool:
 _instance_mutex = None
 
 
-def main():
+def main(start_hidden: bool = False):
+    """start_hidden: open straight to the tray with no window -- used at login,
+    and so restarting Deo never pops a window over a fullscreen game."""
     if _already_running():
         print(f"{config.ASSISTANT_NAME} is already running -- not starting a second copy.")
         return
@@ -349,7 +371,43 @@ def main():
         assistant_name=config.ASSISTANT_NAME,
         on_text_submit=lambda text: _ask_and_speak(brain, gui, text),
         on_stop=lambda: (tts.stop(), gui.push_status("idle")),
+        on_pause_toggle=lambda: _toggle_pause_everywhere(),
+        start_hidden=start_hidden,
     )
+
+    # Tray icon: closing the window hides it there instead of quitting.
+    tray = None
+    try:
+        from deo.tray import DeoTray
+        tray = DeoTray(gui, is_paused=_paused.is_set, toggle_pause=toggle_pause,
+                       on_quit=gui.request_quit)
+        tray.start()
+    except Exception as e:
+        print(f"[tray] unavailable ({e}) -- closing the window will quit Deo")
+
+    def _toggle_pause_everywhere():
+        paused = toggle_pause()
+        if tray:
+            tray.set_paused(paused)
+        return paused
+
+    # The small line under the status: which brain, paused or not, next timer.
+    def _info_loop():
+        while True:
+            try:
+                from deo import gamemode as gm, timers as tm
+                model = gm.current_model()
+                game = gm.running_game()
+                parts = [f"Brain {model.split(':')[0]}{' (game mode)' if game else ''}",
+                         "mic paused" if _paused.is_set() else "mic live"]
+                nxt = tm.next_summary()
+                if nxt:
+                    parts.append(nxt)
+                gui.push_info("  ·  ".join(parts))
+            except Exception as e:
+                print(f"[main] info line: {e}")
+            time.sleep(5)
+    threading.Thread(target=_info_loop, daemon=True).start()
     gui.push_system_message(
         f"{config.ASSISTANT_NAME} is online. "
         + ("Groq (cloud) primary, local fallback ready." if config.GROQ_API_KEY else "Running fully local -- no GROQ_API_KEY set.")
@@ -403,6 +461,12 @@ def main():
     if config.DEBUG_STARTUP_TIMING:
         print(f"[timing] entering main loop: {time.monotonic() - _t0:.2f}s")
 
+    if start_hidden:
+        if tray:
+            print("[main] started in the tray")
+        else:
+            gui.request_show()    # no tray to reopen it from -- show the window after all
+
     try:
         gui.run()  # blocks on the Tk mainloop until the window is closed
     finally:
@@ -412,6 +476,11 @@ def main():
         if gesture_listener:
             gesture_listener.stop()
         mcp_bridge.stop()
+        if tray:
+            try:
+                tray.icon.stop()
+            except Exception:
+                pass
         tts.shutdown()  # kills the pre-spawned idle Piper, if there is one
         print("\nShutting down. Bye!")
 

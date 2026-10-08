@@ -179,6 +179,18 @@ def cancel_timer(which: str = "") -> dict:
     return {"success": True, "message": f"Cancelled {len(gone)}: {names}."}
 
 
+def next_summary() -> str:
+    """Short text for the window's info line, e.g. "pasta timer 9:42 PM"."""
+    with _lock:
+        _load()
+        if not _items:
+            return ""
+        nxt = min(_items, key=lambda i: i["due"])
+    name = f"{nxt['label']} timer" if nxt["kind"] == "timer" and nxt["label"] else            "timer" if nxt["kind"] == "timer" else "reminder"
+    more = f" (+{len(_items) - 1})" if len(_items) > 1 else ""
+    return f"{name} {_say_when(nxt['due']).replace('at ', '')}{more}"
+
+
 def get_date_time() -> dict:
     """The model has no clock of its own -- without this, "what time is it"
     and "remind me in an hour" would be guesses."""
