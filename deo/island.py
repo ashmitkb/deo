@@ -49,18 +49,6 @@ LABELS = {"listening": "Listening…", "thinking": "Thinking…", "speaking": ""
 CANVAS_W, CANVAS_H = 760, 300          # logical px; window is this big, mostly transparent
 TOP_MARGIN = 14
 COMPACT = (230, 54)
-BLOB_COMPACT = (78, 54)    # listening/thinking with nothing to read: just the blob
-
-# The blob's moods -- the same numbers as the app's blob (deo/webui/app.js)
-BLOB_MOODS = {
-    "idle":      (0.045, 0.55, 0.10, 0.55),     # wobble, speed, spin, colour
-    "listening": (0.090, 1.50, 0.35, 1.00),
-    "thinking":  (0.070, 2.10, 1.30, 0.85),
-    "speaking":  (0.060, 2.80, 0.50, 1.00),
-    "notice":    (0.050, 0.90, 0.20, 0.80),
-}
-_BLOB_N = 9
-_BLOB_SEEDS = [(1 + (i * 7) % 5 * 0.31, (i * 2.399) % 6.283) for i in range(_BLOB_N)]
 MAX_TEXT_W = 560
 MAX_REPLY_LINES = 3
 PULL_OPEN = 90            # logical px you have to drag the island down to open Deo
@@ -507,9 +495,10 @@ class Island:
     def _retarget(self):
         s = self.s
         label, lines = self._content()
-        compact_only = not (self.notice or self.reply_text or self.user_text or self.dragging)
+        compact_only = not (self.notice or self.reply_text or self.user_text)
         if compact_only:
-            w, h = BLOB_COMPACT[0] * s, BLOB_COMPACT[1] * s
+            tw = self.font_label.getlength(lines[0])
+            w, h = max(COMPACT[0] * s, tw + 90 * s), COMPACT[1] * s
         else:
             font = self.font_text
             tw = max([font.getlength(l) for l in lines] + [self.font_small.getlength(label) if label else 0])
@@ -546,79 +535,6 @@ class Island:
                 time.sleep(0.12)
             else:
                 time.sleep(0.2)
-
-    def _blob(self, d, now):
-        """The living blob, d px across, as an RGBA image: an outline that's a
-        smooth curve through wobbling points, frosted white glass with soft
-        iridescent colour swirling inside, and a glass highlight."""
-        import numpy as np
-        mood = BLOB_MOODS.get(self.state, BLOB_MOODS["idle"])
-        cur = getattr(self, "_blob_cur", list(mood))
-        dt = min(0.05, now - getattr(self, "_blob_last", now))
-        self._blob_last = now
-        cur = [c + (m - c) * min(1.0, dt * 3) for c, m in zip(cur, mood)]
-        self._blob_cur = cur
-        amp, speed, spin_rate, sat = cur
-        self._blob_t = getattr(self, "_blob_t", 0.0) + dt * speed
-        self._blob_spin = getattr(self, "_blob_spin", 0.0) + dt * spin_rate
-        want = (0.35 + random.random() * 0.65) if self.state == "speaking" else 0.0
-        self._blob_level = getattr(self, "_blob_level", 0.0)
-        self._blob_level += (want - self._blob_level) * min(1.0, dt * 10)
-        t, spin, level = self._blob_t, self._blob_spin, self._blob_level
-
-        SS = 3
-        size = int(d * SS)
-        c = size / 2
-        R = size * 0.38 * (1 + level * 0.06)
-        pts = []
-        for i in range(_BLOB_N):
-            a = i / _BLOB_N * 2 * math.pi + spin * 0.3
-            f, ph = _BLOB_SEEDS[i]
-            wob = math.sin(t * f + ph) * 0.6 + math.sin(t * f * 1.7 + ph * 2.1) * 0.4
-            r = R * (1 + (amp + level * 0.07) * wob)
-            pts.append((c + math.cos(a) * r, c + math.sin(a) * r))
-        # smooth closed outline: Catmull-Rom through the points
-        outline = []
-        for i in range(_BLOB_N):
-            p0, p1, p2, p3 = pts[i - 1], pts[i], pts[(i + 1) % _BLOB_N], pts[(i + 2) % _BLOB_N]
-            for k in range(10):
-                u = k / 10
-                u2, u3 = u * u, u * u * u
-                outline.append(tuple(0.5 * ((2 * p1[j]) + (-p0[j] + p2[j]) * u
-                                            + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * u2
-                                            + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * u3) for j in (0, 1)))
-        mask_big = Image.new("L", (size, size), 0)
-        ImageDraw.Draw(mask_big).polygon(outline, fill=255)
-        mask = mask_big.resize((d, d), Image.BOX)
-
-        yy, xx = np.mgrid[0:d, 0:d].astype(np.float32)
-        cc, rr = d / 2, R / SS
-        # frosted white base, brighter toward the top-left
-        dist = np.hypot(xx - (cc - rr * 0.35), yy - (cc - rr * 0.4)) / (rr * 1.25)
-        base = np.clip(1 - dist, 0, 1)[..., None]
-        rgb = np.array([200, 205, 220], np.float32) * (1 - base) + 245 * base
-        # iridescent colour, multiplied in
-        layer = Image.new("RGB", (d, d), (255, 255, 255))
-        dl = ImageDraw.Draw(layer)
-        for col, off in (((165, 180, 252), 0.0), ((125, 211, 252), 2.1), ((249, 168, 212), 4.2)):
-            ang = spin * 1.4 + off + math.sin(t * 0.7 + off) * 0.6
-            bx, by = cc + math.cos(ang) * rr * 0.55, cc + math.sin(ang) * rr * 0.55
-            rad = rr * 0.62
-            mixed = tuple(int(255 - (255 - v) * sat) for v in col)
-            dl.ellipse((bx - rad, by - rad, bx + rad, by + rad), fill=mixed)
-        layer = np.asarray(layer.filter(ImageFilter.GaussianBlur(max(1.0, d / 9))), np.float32)
-        rgb = rgb * layer / 255
-        # glass highlight and a soft shade
-        hi = np.clip(1 - np.hypot(xx - (cc - rr * 0.42), yy - (cc - rr * 0.5)) / (rr * 0.6), 0, 1)[..., None]
-        rgb = rgb * (1 - hi * 0.85) + 255 * hi * 0.85
-        lo = np.clip(1 - np.hypot(xx - (cc + rr * 0.5), yy - (cc + rr * 0.6)) / rr, 0, 1)[..., None]
-        rgb = rgb * (1 - lo * 0.28) + np.array([40, 40, 60], np.float32) * lo * 0.28
-        img = Image.fromarray(rgb.clip(0, 255).astype(np.uint8), "RGB").convert("RGBA")
-        img.putalpha(mask)
-        # crisp white rim
-        rim = ImageChops.subtract(mask, mask.filter(ImageFilter.MinFilter(3)))
-        img.paste((255, 255, 255, 255), (0, 0), rim.point(lambda v: int(v * 0.55)))
-        return img
 
     def _draw(self, now):
         """Apple-style liquid glass: clear, refracting at the edges, lit by a
@@ -702,16 +618,27 @@ class Island:
         frame.paste((255, 255, 255, 255), (0, 0), bot.point(lambda v: int(v * 0.22 * a)))
 
         # content: a white glyph for the state, then white text
-        if w > 50 * s and h > 40 * s and a > 0.3:
+        if w > 120 * s and h > 40 * s and a > 0.3:
             ta = int(255 * min(1.0, (a - 0.3) / 0.5))
-            compact_only = not (self.notice or self.reply_text or self.user_text or self.dragging)
-            bd = int((36 if compact_only else 30) * s)
-            blob = self._blob(bd, now)
-            if ta < 255:
-                blob.putalpha(blob.getchannel("A").point(lambda v: v * ta // 255))
-            ocx = (box[0] + box[2]) / 2 if compact_only else box[0] + 28 * s
-            ocy = box[1] + min(h / 2, 27 * s)
-            frame.alpha_composite(blob, (int(ocx - bd / 2), int(ocy - bd / 2)))
+            ocx, ocy = box[0] + 28 * s, box[1] + min(h / 2, 27 * s)
+            glyph = Image.new("L", (W, H), 0)
+            if self.state in ("listening", "speaking"):
+                fast = self.state == "speaking"
+                for i in range(5):                                # waveform bars
+                    amp = abs(math.sin(t * (8.5 if fast else 3.6) + i * 0.95))
+                    bh = (5 + amp * (13 if fast else 8)) * s
+                    bx = ocx + (i - 2) * 5 * s
+                    glyph = ImageChops.lighter(glyph, _aa_rrect(
+                        (W, H), (bx - 1.4 * s, ocy - bh / 2, bx + 1.4 * s, ocy + bh / 2), 1.4 * s))
+            elif self.state == "thinking":
+                for i in range(3):                                # three pulsing dots
+                    p = 0.35 + 0.65 * max(0.0, math.sin(t * 5 - i * 0.9))
+                    dx = ocx + (i - 1) * 7 * s
+                    dot = _aa_ellipse((W, H), (dx - 2.6 * s, ocy - 2.6 * s, dx + 2.6 * s, ocy + 2.6 * s))
+                    glyph = ImageChops.lighter(glyph, dot.point(lambda v, p=p: int(v * p)))
+            else:
+                glyph = _aa_ellipse((W, H), (ocx - 4 * s, ocy - 4 * s, ocx + 4 * s, ocy + 4 * s))
+            frame.paste((255, 255, 255, 255), (0, 0), glyph.point(lambda v: v * ta // 255))
 
             dr = ImageDraw.Draw(frame)
 
@@ -721,8 +648,10 @@ class Island:
 
             label, lines = self._content()
             tx = box[0] + 50 * s
+            compact_only = not (self.notice or self.reply_text or self.user_text)
             if compact_only:
-                pass                                  # just the blob -- no "Listening..." text
+                bbox = self.font_label.getbbox(lines[0])
+                text((tx, ocy - (bbox[1] + bbox[3]) / 2), lines[0], self.font_label, ta)
             else:
                 ty = box[1] + 13 * s
                 if label:
