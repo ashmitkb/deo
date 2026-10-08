@@ -14,9 +14,15 @@
     </div>
     <div class="heading">
       <h1>Deo</h1>
-      <div class="state-line"><span id="state">Idle</span><span class="sep">·</span><span id="info" class="info">Starting up…</span></div>
+      <div id="state" class="state">Idle</div>
     </div>
-    <button id="pause" class="glass-btn" type="button">Pause</button>
+    <button id="guide-open" class="icon-btn" type="button" aria-label="Guide" title="Guide">
+      <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="16.8" r="1.1" fill="currentColor"/></svg>
+    </button>
+    <button id="pause" class="icon-btn" type="button" aria-label="Pause listening" title="Pause listening">
+      <svg class="i-pause" viewBox="0 0 24 24" width="18" height="18"><rect x="7" y="5.5" width="3.4" height="13" rx="1.2" fill="currentColor"/><rect x="13.6" y="5.5" width="3.4" height="13" rx="1.2" fill="currentColor"/></svg>
+      <svg class="i-play" viewBox="0 0 24 24" width="18" height="18"><path d="M8 5.8v12.4c0 .8.9 1.3 1.6.9l9.6-6.2c.6-.4.6-1.3 0-1.7L9.6 4.9C8.9 4.5 8 5 8 5.8z" fill="currentColor"/></svg>
+    </button>
   </header>
 
   <main id="chat" class="chat" aria-live="polite">
@@ -26,10 +32,10 @@
   </main>
 
   <footer class="bottom">
-    <div class="controls">
-      <button id="stop" class="glass-btn" type="button">Stop talking</button>
-      <span class="hint">☝ right · ✌ left · F9 talk · F10 stop</span>
-    </div>
+    <button id="stop" class="stop-pill" type="button">
+      <svg viewBox="0 0 24 24" width="12" height="12"><rect x="5" y="5" width="14" height="14" rx="3" fill="currentColor"/></svg>
+      Stop talking
+    </button>
     <form id="composer" class="composer glass" autocomplete="off">
       <input id="input" type="text" placeholder="Ask Deo anything" spellcheck="false">
       <button id="send" type="submit" aria-label="Send">
@@ -37,6 +43,58 @@
       </button>
     </form>
   </footer>
+
+  <!-- everything you might need to know, out of the way until asked for -->
+  <div id="guide" class="guide" aria-hidden="true">
+    <div class="guide-sheet glass">
+      <div class="guide-head">
+        <h2>Guide</h2>
+        <button id="guide-close" class="icon-btn" type="button" aria-label="Close guide">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <section>
+        <h3>Right now</h3>
+        <p id="info" class="info">Starting up…</p>
+      </section>
+
+      <section>
+        <h3>Talking</h3>
+        <dl>
+          <dt>“hey Deo”</dt><dd>Wake Deo up and ask anything</dd>
+          <dt>Keep talking</dt><dd>Follow-ups don’t need the wake word</dd>
+          <dt>“hey Deo” mid-answer</dt><dd>Interrupts it — then say “continue” to resume</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h3>Keys</h3>
+        <dl>
+          <dt><kbd>F9</kbd></dt><dd>Hold to talk</dd>
+          <dt><kbd>F10</kbd></dt><dd>Stop Deo talking</dd>
+          <dt><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>D</kbd></dt><dd>Answer the question on screen</dd>
+          <dt><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>E</kbd></dt><dd>…and explain it</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h3>Gestures</h3>
+        <dl>
+          <dt>☝ 1 finger</dt><dd>Move the window you’re using to the right screen</dd>
+          <dt>✌ 2 fingers</dt><dd>…to the left screen</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h3>The island</h3>
+        <dl>
+          <dt>Pull it down</dt><dd>Opens this window</dd>
+          <dt>Close this window</dt><dd>Deo keeps running in the tray</dd>
+        </dl>
+      </section>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

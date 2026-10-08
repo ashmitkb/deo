@@ -4,11 +4,11 @@
 const $ = (id) => document.getElementById(id);
 const chat = $("chat");
 const STATE_WORDS = {
-  idle: "Idle — say “hey Deo”",
+  idle: "Idle",
   listening: "Listening",
   thinking: "Thinking",
   speaking: "Speaking",
-  paused: "Paused — not listening",
+  paused: "Paused",
   error: "Something went wrong",
 };
 
@@ -115,8 +115,8 @@ function setState(state) {
 function setPaused(p) {
   paused = !!p;
   const b = $("pause");
-  b.textContent = paused ? "Resume" : "Pause";
   b.classList.toggle("on", paused);
+  b.title = b.ariaLabel = paused ? "Resume listening" : "Pause listening";
   setState(currentState);
 }
 
@@ -165,5 +165,15 @@ chat.addEventListener("click", (ev) => {
     setTimeout(() => (copy.textContent = "Copy"), 1400);
   }
 });
+
+// ---------------------------------------------------------------- guide sheet
+function setGuide(open) {
+  $("guide").classList.toggle("open", open);
+  $("guide").setAttribute("aria-hidden", String(!open));
+}
+$("guide-open").addEventListener("click", () => setGuide(true));
+$("guide-close").addEventListener("click", () => setGuide(false));
+$("guide").addEventListener("click", (ev) => { if (ev.target === $("guide")) setGuide(false); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") setGuide(false); });
 
 window.addEventListener("pywebviewready", () => { poll(); $("input").focus(); });

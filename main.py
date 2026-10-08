@@ -444,10 +444,10 @@ def main(start_hidden: bool = False):
                 print(f"[main] info line: {e}")
             time.sleep(5)
     threading.Thread(target=_info_loop, daemon=True).start()
-    gui.push_system_message(
-        f"{config.ASSISTANT_NAME} is online. "
-        + ("Groq (cloud) primary, local fallback ready." if config.GROQ_API_KEY else "Running fully local -- no GROQ_API_KEY set.")
-    )
+    # Log only -- the window stays clean. (It used to say "Groq (cloud) primary"
+    # whenever a key was in .env, even though LOCAL_ONLY meant Groq was off.)
+    print(f"[main] {config.ASSISTANT_NAME} is online -- "
+          + ("fully local" if not config.USE_CLOUD_LLM else "Groq primary, local fallback"))
 
     # Timers/reminders announce themselves -- even mid-conversation, they
     # just wait for Deo to finish its current sentence.
