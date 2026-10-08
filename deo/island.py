@@ -15,7 +15,9 @@ Every frame is rendered with PIL (anti-aliased shapes, real blur for the
 shadow and the flowing coloured rim) and pushed to a Win32 *layered* window
 with per-pixel alpha via UpdateLayeredWindow. The window is:
     WS_EX_NOACTIVATE  -- never takes keyboard focus (safe over games)
-    WS_EX_TRANSPARENT -- clicks go straight through to whatever is below
+    per-pixel alpha   -- clicks pass through every transparent pixel; only
+                         the island itself can be grabbed (pull it down to
+                         open the Deo window)
     WS_EX_TOPMOST / TOOLWINDOW -- on top, no taskbar button
 It runs on its own thread with its own message pump, and is per-monitor DPI
 aware so it's crisp on a 200% screen.
@@ -49,6 +51,20 @@ TOP_MARGIN = 14
 COMPACT = (230, 54)
 MAX_TEXT_W = 560
 MAX_REPLY_LINES = 3
+PULL_OPEN = 90            # logical px you have to drag the island down to open Deo
+
+
+def _smooth_lut(lo, hi):
+    out = []
+    for v in range(256):
+        x = min(1.0, max(0.0, (v - lo) / (hi - lo)))
+        out.append(int(255 * x * x * (3 - 2 * x)))
+    return out
+
+
+# Threshold levels on the blurred "liquid" mask (see Island._liquid_masks).
+_LUT_BODY = _smooth_lut(112, 146)
+_LUT_INSET = _smooth_lut(162, 196)
 
 
 def _rgb(hex_):
@@ -186,7 +202,12 @@ def _aa_ellipse(size, box):
 
 # ---------------------------------------------------------------- the island
 class Island:
-    def __init__(self):
+    def __init__(self, on_open=None):
+        """on_open: called (on a new thread) when the island is pulled down far
+        enough to open the full Deo window."""
+        self.on_open = on_open
+        self.dragging = False
+        self.drag_raw = 0.0
         self._q = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True, name="deo-island")
         self.ready = threading.Event()
@@ -218,15 +239,18 @@ class Island:
         self.win_y = top
 
         wc = win32gui.WNDCLASS()
-        wc.lpfnWndProc = lambda h, m, w, l: win32gui.DefWindowProc(h, m, w, l)
+        wc.lpfnWndProc = self._wndproc
         wc.lpszClassName = "DeoIsland"
         wc.hInstance = win32api.GetModuleHandle(None)
         try:
             atom = win32gui.RegisterClass(wc)
         except Exception:
             atom = "DeoIsland"
+        # No WS_EX_TRANSPARENT any more: a layered window already lets clicks
+        # through its fully transparent pixels, so only the island itself is
+        # grabbable. WS_EX_NOACTIVATE keeps grabbing it from stealing focus.
         ex = (win32con.WS_EX_LAYERED | win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW
-              | win32con.WS_EX_TRANSPARENT | 0x08000000)          # WS_EX_NOACTIVATE
+              | 0x08000000)                                       # WS_EX_NOACTIVATE
         self.hwnd = win32gui.CreateWindowEx(ex, atom, "Deo Island", win32con.WS_POPUP,
                                             self.win_x, self.win_y, self.W, self.H, 0, 0, wc.hInstance, None)
         # Invisible to screen capture, so the glass can sample what's BEHIND it
@@ -246,6 +270,19 @@ class Island:
             except Exception:
                 pass
             return font
+        # Animation state lives here (not in _run) so the renderer is usable as
+        # soon as the window exists -- tests drive it without the thread.
+        s = self.s
+        self.y = Spring(-60 * s, 210, 0.66)
+        self.w = Spring(40 * s, 190, 0.58)
+        self.h = Spring(30 * s, 190, 0.6)
+        self.alpha = Spring(0.0, 140, 0.9)
+        self.pull = Spring(0.0, 230, 0.42)              # how far it's being pulled; wobbly
+        self.state, self.user_text, self.reply_text, self.notice = "idle", "", "", ""
+        self.visible = False
+        self.hide_at = None
+        self.t0 = time.monotonic()
+
         try:
             self.font_text = f(15.5, 400)
             self.font_label = f(14.5, 500)
@@ -256,15 +293,6 @@ class Island:
     def _run(self):
         import win32gui
         self._setup()
-        s = self.s
-        self.y = Spring(-60 * s, 210, 0.66)
-        self.w = Spring(40 * s, 190, 0.58)
-        self.h = Spring(30 * s, 190, 0.6)
-        self.alpha = Spring(0.0, 140, 0.9)
-        self.state, self.user_text, self.reply_text, self.notice = "idle", "", "", ""
-        self.visible = False
-        self.hide_at = None
-        self.t0 = time.monotonic()
         threading.Thread(target=self._backdrop_loop, daemon=True, name="deo-island-glass").start()
         self.ready.set()
         last = time.monotonic()
@@ -280,13 +308,15 @@ class Island:
             except queue.Empty:
                 pass
             now = time.monotonic()
-            if self.hide_at and now >= self.hide_at:
+            if self.hide_at and now >= self.hide_at and not self.dragging:
                 self._retract()
             dt = min(now - last, 0.05)
             last = now
-            if self.visible or not self.alpha.settled():
+            if self.visible or not self.alpha.settled() or not self.pull.settled():
                 for sp in (self.y, self.w, self.h, self.alpha):
                     sp.step(dt)
+                if not self.dragging:
+                    self.pull.step(dt)
                 try:
                     _push_frame(self.hwnd, self._draw(now), self.win_x, self.win_y)
                 except Exception as e:
@@ -335,6 +365,7 @@ class Island:
             except Exception:
                 pass
             self.visible = True
+            self._appear_t = time.monotonic()
             s = self.s
             self.y.value, self.w.value, self.h.value = -50 * s, 44 * s, 30 * s
             win32gui.ShowWindow(self.hwnd, 4)                   # SW_SHOWNOACTIVATE
@@ -345,6 +376,92 @@ class Island:
         self.visible = False
         s = self.s
         self.y.target, self.w.target, self.h.target, self.alpha.target = -70 * s, 50 * s, 32 * s, 0.0
+
+    # ---- pull to open ---------------------------------------------------------------
+    def _wndproc(self, hwnd, msg, wparam, lparam):
+        import win32con
+        import win32gui
+        if msg == 0x0021:                                   # WM_MOUSEACTIVATE
+            return 3                                        # MA_NOACTIVATE: never take focus
+        if msg == win32con.WM_SETCURSOR:
+            win32gui.SetCursor(win32gui.LoadCursor(0, win32con.IDC_HAND))
+            return 1
+        if msg == win32con.WM_LBUTTONDOWN:
+            self._drag_begin()
+            return 0
+        if msg == win32con.WM_MOUSEMOVE and self.dragging:
+            self._drag_move()
+            return 0
+        if msg in (win32con.WM_LBUTTONUP, 0x0215) and self.dragging:   # 0x215 WM_CAPTURECHANGED
+            self._drag_end()
+            return 0
+        return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+    def _drag_begin(self):
+        import win32api
+        import win32gui
+        self.dragging, self.drag_raw = True, 0.0
+        self._drag_y0 = win32api.GetCursorPos()[1]
+        self.hide_at = None
+        self.pull.velocity = 0.0
+        win32gui.SetCapture(self.hwnd)        # keep getting moves when the cursor leaves it
+
+    def _drag_move(self):
+        import win32api
+        raw = max(0.0, win32api.GetCursorPos()[1] - self._drag_y0)
+        self.drag_raw = raw
+        # rubber band: follows the cursor at first, then resists more and more
+        self.pull.value = self.pull.target = raw * 0.62 / (1 + raw / (520 * self.s))
+
+    def _drag_end(self):
+        import win32gui
+        self.dragging = False                 # before ReleaseCapture: it re-enters via WM_CAPTURECHANGED
+        win32gui.ReleaseCapture()
+        if self.drag_raw >= PULL_OPEN * self.s and self.on_open:
+            # stretch on through, then drain away while the Deo window opens
+            self.pull.target = self.pull.value + 90 * self.s
+            self.hide_at = time.monotonic() + 0.22
+            threading.Thread(target=self.on_open, daemon=True).start()
+        else:
+            self.pull.target = 0.0            # spring back up, with a wobble
+            if self.state in ("idle", "notice"):
+                self.hide_at = time.monotonic() + 2.5
+
+    def _liquid_masks(self, box, radius, pull, now):
+        """(body, inset) masks for the island as LIQUID -- the metaball trick:
+        draw the shapes, blur them together, cut back to a crisp edge, and
+        they merge like water.
+
+          dropping in : the pill hangs from the top edge of the screen on a
+                        neck that thins and snaps ~0.4s after it appears
+          pulled      : a droplet of glass stretches down below the pill on a
+                        neck that thins the further you pull
+        """
+        s, W, H = self.s, self.W, self.H
+        base = Image.new("L", (W, H), 0)
+        d = ImageDraw.Draw(base)
+        d.rounded_rectangle(box, radius, fill=255)
+        cx = (box[0] + box[2]) / 2
+        bw = box[2] - box[0]
+
+        drip = max(0.0, 1 - (now - getattr(self, "_appear_t", 0.0)) / 0.42) if self.visible else 0.0
+        neck = drip * min(bw * 0.34, 52 * s)
+        if neck >= 3 * s:
+            d.rounded_rectangle((cx - neck / 2, -60 * s, cx + neck / 2, box[1] + min(radius, 22 * s)),
+                                neck / 2, fill=255)
+            rw = neck * 2.6                                   # the reservoir at the screen edge
+            d.ellipse((cx - rw / 2, -rw * 0.55, cx + rw / 2, rw * 0.22), fill=255)
+
+        if pull > 2 * s:
+            grow = min(1.0, pull / (70 * s))
+            r = min((box[3] - box[1]) * 0.55, 30 * s) * (0.55 + 0.45 * grow)
+            by = box[3] + pull - r * 0.4                      # the droplet hangs below the pill
+            d.ellipse((cx - r, by - r, cx + r, by + r), fill=255)
+            stem = r * 1.25 * max(0.28, 1 - pull / (260 * s))  # thins as it stretches
+            d.rounded_rectangle((cx - stem / 2, box[3] - radius, cx + stem / 2, by), stem / 2, fill=255)
+
+        field = _soft(base, 7 * s)
+        return field.point(_LUT_BODY), field.point(_LUT_INSET)
 
     # ---- layout -------------------------------------------------------------------
     def _wrap(self, text, font, width, max_lines):
@@ -372,6 +489,9 @@ class Island:
         """(label line or None, body lines) for the current state."""
         s = self.s
         width = MAX_TEXT_W * s
+        if self.dragging:
+            ready = self.drag_raw >= PULL_OPEN * s
+            return None, ["Release to open Deo" if ready else "Pull down to open Deo"]
         if self.notice:
             return None, self._wrap(self.notice, self.font_text, width, 2)
         if self.reply_text:
@@ -433,9 +553,13 @@ class Island:
         t = now - self.t0
         w, h, y = max(self.w.value, 20 * s), max(self.h.value, 20 * s), self.y.value
         a = max(0.0, min(1.0, self.alpha.value))
+        radius = min(h / 2, 28 * s)
+        # squash & stretch: a moving drop gets taller and thinner, then squashes
+        st = max(-0.16, min(0.3, self.y.velocity / (1500 * s)))
+        h, w = h * (1 + st), w * (1 - st * 0.45)
+        pull = max(0.0, self.pull.value)
         x0 = (W - w) / 2
         box = (x0, y, x0 + w, y + h)
-        radius = min(h / 2, 28 * s)
         frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
         # soft floating shadow
@@ -447,9 +571,9 @@ class Island:
         frame.paste((0, 0, 0, 255), (0, 0),
                     sm.filter(ImageFilter.GaussianBlur(10 * s)).resize((W, H), Image.BILINEAR))
 
-        body = _aa_rrect((W, H), box, radius)
-        rx1, ry1 = max(0, int(box[0]) - 2), max(0, int(box[1]) - 2)
-        rx2, ry2 = min(W, int(math.ceil(box[2])) + 2), min(H, int(math.ceil(box[3])) + 2)
+        body, inset1 = self._liquid_masks(box, radius, pull, now)
+        bb = body.getbbox() or (0, 0, 1, 1)
+        rx1, ry1, rx2, ry2 = max(0, bb[0] - 2), max(0, bb[1] - 2), min(W, bb[2] + 2), min(H, bb[3] + 2)
         if rx2 - rx1 > 4 and ry2 - ry1 > 4:
             bg = self._backdrop if self._backdrop is not None else np.full((H, W, 3), 30.0, np.float32)
             # Refraction: blur the pill's outline; its gradient points inward near
@@ -479,8 +603,6 @@ class Island:
             frame.paste(glass, (0, 0), body.point(lambda v: int(v * a)))
 
         # specular light: bright rim at the top fading down the sides
-        inset1 = _aa_rrect((W, H), (box[0] + 1.3 * s, box[1] + 1.3 * s, box[2] - 1.3 * s, box[3] - 1.3 * s),
-                           max(1, radius - 1.3 * s))
         rim = ImageChops.subtract(body, inset1)
         vert = Image.linear_gradient("L").resize((1, 256))                       # 0 top -> 255 bottom
         vert = vert.point(lambda v: int(255 - v * 0.62)).resize((W, max(1, int(h))))

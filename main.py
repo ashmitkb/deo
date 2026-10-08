@@ -401,7 +401,8 @@ def main(start_hidden: bool = False):
     if config.ISLAND_ENABLED:
         try:
             from deo.island import Island
-            gui.island = Island().start()
+            # Pulling the island down far enough opens the full Deo window.
+            gui.island = Island(on_open=lambda: gui.request_show()).start()
             if config.EDGE_GLOW_ENABLED:
                 from deo.edgeglow import EdgeGlow
                 gui.edge_glow = EdgeGlow().start()

@@ -758,6 +758,39 @@ def test_edge_glow_frames():
         win32gui.ShowWindow = real_show
 
 
+def test_island_pull_to_open():
+    print("\nisland: pull it down to open Deo")
+    import win32api, win32gui
+    from deo import island as isl
+    opened = []
+    real = (win32gui.ShowWindow, win32gui.SetCapture, win32gui.ReleaseCapture, win32api.GetCursorPos)
+    cursor = {"y": 30}
+    try:
+        win32gui.ShowWindow = lambda *a: None
+        win32gui.SetCapture = lambda *a: None
+        win32gui.ReleaseCapture = lambda *a: None
+        win32api.GetCursorPos = lambda: (900, cursor["y"])
+        it = isl.Island(on_open=lambda: opened.append(1))
+        it._setup()
+        it.pull, it.y = isl.Spring(0.0), isl.Spring(14.0)
+        it.state, it.visible, it.hide_at = "idle", True, None
+
+        it._drag_begin(); cursor["y"] = 30 + 40 * it.s; it._drag_move(); it._drag_end()
+        import time as _t; _t.sleep(0.05)
+        check("a short pull springs back without opening", not opened and it.pull.target == 0.0)
+        it._drag_begin(); cursor["y"] = 30 + 60 * it.s; it._drag_move()
+        check("hint: 'Pull down to open Deo'", it._content()[1] == ["Pull down to open Deo"])
+        cursor["y"] = 30 + 140 * it.s; it._drag_move()
+        check("past the line: 'Release to open Deo'", it._content()[1] == ["Release to open Deo"])
+        it._drag_end(); _t.sleep(0.05)
+        check("releasing past the line opens Deo", opened == [1])
+        frame = it._draw(_t.monotonic())
+        check("a pulled droplet frame renders", frame.size == (it.W, it.H))
+        win32gui.DestroyWindow(it.hwnd)
+    finally:
+        win32gui.ShowWindow, win32gui.SetCapture, win32gui.ReleaseCapture, win32api.GetCursorPos = real
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -869,6 +902,7 @@ def main():
                  test_interrupted_reply_is_remembered, test_speaker_check, test_island_handoff,
                  test_island_frame_reaches_windows, test_claimed_action_is_enforced,
                  test_web_window_matches_api, test_edge_glow_frames,
+                 test_island_pull_to_open,
                  test_vad):
         try:
             test()
