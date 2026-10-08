@@ -1,0 +1,46 @@
+# Secrets -- never commit these
+.env
+deo/.env
+
+# Virtualenv
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Large downloaded binaries and models (re-downloadable, see README)
+deo/piper/
+deo/vision/*.task
+deo/VC_redist.x64.exe
+piper-sample-generator/models/*.pt
+
+# Recorded audio: your own voice. Training samples are worth keeping locally but
+# are large and personal -- decide deliberately before pushing them anywhere.
+debug_audio/
+training/data/
+
+# Trained wake-word models (regenerate with training/train_wakeword.py)
+deo/wakeword/*.onnx
+
+# Debug artefacts
+last_screen_qa_capture.png
+
+# IDE
+.idea/
+.vscode/
+permissions.log
+
+# Kokoro voice model (338MB, re-downloadable -- see deo/config.py)
+deo/kokoro/
+kokoro_sample.wav
+
+# Personal state: what Deo remembers about you, and recent conversation
+deo/memory.json
+deo/conversation.json
+
+# Runtime logs
+logs/
+
+# Third-party clone used only by training (github.com/rhasspy/piper-sample-generator)
+piper-sample-generator/

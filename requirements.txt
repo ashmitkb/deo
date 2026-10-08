@@ -1,0 +1,30 @@
+# Core voice loop
+sounddevice
+soundfile
+numpy
+faster-whisper        # local STT (GPU)
+nvidia-cublas-cu12>=12.8  # GPU Whisper on the RTX 5060 -- 12.4 can't run int8 on Blackwell
+nvidia-cudnn-cu12
+kokoro-onnx           # local TTS voice. Model files go in deo/kokoro/ -- see README
+openwakeword          # local wake word
+groq                  # cloud LLM + STT + TTS (all optional at runtime)
+ollama                # local LLM fallback, and the screen-QA vision model
+keyboard              # push-to-talk, interrupt, and screen-QA hotkeys
+
+# Tools
+requests              # YouTube Data API
+ddgs                  # web_search (this is the package tools.py imports --
+                      # the old "duckduckgo-search" name is the predecessor)
+pywin32               # win32gui/win32con/win32api for move_active_window
+mcp                   # MCP tool bridge (stdio servers)
+
+# Screen QA
+mss                   # screen capture
+pillow                # screenshot encoding
+
+# Hand-gesture window control (optional -- main.py degrades gracefully if absent)
+mediapipe
+opencv-python
+
+# NOT pip-installable: Piper TTS is a standalone binary + voice model.
+# See README for the download/placement steps.
