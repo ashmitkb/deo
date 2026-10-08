@@ -664,6 +664,34 @@ def test_island_handoff():
     check("code always goes to the window", DeoGUI._is_big("here:\n```python\nprint(1)\n```"))
 
 
+def test_island_frame_reaches_windows():
+    print("\nisland frames actually reach the window (64-bit handles)")
+    # The first live run died in _push_frame with an OverflowError on a 64-bit
+    # GDI handle -- the off-screen previews never called it. This pushes one
+    # real frame to a real, never-shown layered window.
+    from deo import island as isl
+    import win32gui
+    real_show = win32gui.ShowWindow
+    try:
+        win32gui.ShowWindow = lambda *a: None      # never put it on screen
+        it = isl.Island()
+        it._setup()
+        s = it.s
+        it.y, it.w, it.h = isl.Spring(14 * s), isl.Spring(300 * s), isl.Spring(56 * s)
+        it.alpha = isl.Spring(1.0)
+        it.state, it.user_text, it.reply_text, it.notice = "listening", "", "", ""
+        import time as _t
+        it.t0 = _t.monotonic()
+        frame = it._draw(_t.monotonic())
+        isl._push_frame(it.hwnd, frame, it.win_x, it.win_y)
+        check("a frame is pushed to a layered window without error", True)
+        win32gui.DestroyWindow(it.hwnd)
+    except Exception as e:
+        check("a frame is pushed to a layered window without error", False, repr(e))
+    finally:
+        win32gui.ShowWindow = real_show
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -773,6 +801,7 @@ def main():
                  test_kokoro_fallback, test_everything_compiles, test_finger_poses, test_code_never_spoken, test_barge_in, test_code_file_newlines, test_game_mode_and_barge_in_verifier, test_prompt_echo,
                  test_conversation_survives_restart, test_timers,
                  test_interrupted_reply_is_remembered, test_speaker_check, test_island_handoff,
+                 test_island_frame_reaches_windows,
                  test_vad):
         try:
             test()

@@ -86,11 +86,24 @@ class _BITMAPINFOHEADER(ctypes.Structure):
                 ("biClrUsed", wt.DWORD), ("biClrImportant", wt.DWORD)]
 
 
-_user32 = ctypes.windll.user32
-_gdi32 = ctypes.windll.gdi32
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+_gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+# Every handle is pointer-sized. Without explicit types ctypes passes and
+# returns 32-bit ints, and the first real frame died with "OverflowError: int
+# too long to convert" on a 64-bit DC handle.
+_user32.GetDC.argtypes, _user32.GetDC.restype = [wt.HWND], wt.HDC
+_user32.ReleaseDC.argtypes, _user32.ReleaseDC.restype = [wt.HWND, wt.HDC], ctypes.c_int
+_user32.UpdateLayeredWindow.argtypes = [wt.HWND, wt.HDC, ctypes.POINTER(wt.POINT), ctypes.POINTER(wt.SIZE),
+                                        wt.HDC, ctypes.POINTER(wt.POINT), wt.COLORREF,
+                                        ctypes.c_void_p, wt.DWORD]
+_user32.UpdateLayeredWindow.restype = wt.BOOL
+_gdi32.CreateCompatibleDC.argtypes, _gdi32.CreateCompatibleDC.restype = [wt.HDC], wt.HDC
+_gdi32.CreateDIBSection.argtypes = [wt.HDC, ctypes.c_void_p, wt.UINT, ctypes.POINTER(ctypes.c_void_p),
+                                    wt.HANDLE, wt.DWORD]
 _gdi32.CreateDIBSection.restype = wt.HBITMAP
-_gdi32.CreateCompatibleDC.restype = wt.HDC
-_gdi32.SelectObject.restype = wt.HGDIOBJ
+_gdi32.SelectObject.argtypes, _gdi32.SelectObject.restype = [wt.HDC, wt.HGDIOBJ], wt.HGDIOBJ
+_gdi32.DeleteObject.argtypes, _gdi32.DeleteObject.restype = [wt.HGDIOBJ], wt.BOOL
+_gdi32.DeleteDC.argtypes, _gdi32.DeleteDC.restype = [wt.HDC], wt.BOOL
 
 
 def _push_frame(hwnd, img, x, y):
@@ -210,7 +223,13 @@ class Island:
             if self.visible or not self.alpha.settled():
                 for sp in (self.y, self.w, self.h, self.alpha):
                     sp.step(dt)
-                _push_frame(self.hwnd, self._draw(now), self.win_x, self.win_y)
+                try:
+                    _push_frame(self.hwnd, self._draw(now), self.win_x, self.win_y)
+                except Exception as e:
+                    # One bad frame must not kill the island for the session.
+                    if not getattr(self, "_frame_error_logged", False):
+                        print(f"[island] frame failed: {e!r}")
+                        self._frame_error_logged = True
                 if not self.visible and self.alpha.value < 0.02 and self.y.settled():
                     win32gui.ShowWindow(self.hwnd, 0)          # SW_HIDE
                 time.sleep(1 / 60)
