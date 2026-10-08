@@ -73,6 +73,7 @@ class DeoWebGUI(IslandRouting):
             js_api=_Api(self),
             width=500, height=820, min_size=(400, 560),
             background_color=BG,
+            transparent=True,          # the page is see-through; acrylic shows behind it
             hidden=start_hidden,
         )
         self.window.events.closing += self._on_closing
@@ -97,14 +98,24 @@ class DeoWebGUI(IslandRouting):
         return True
 
     def _style_native_window(self):
-        """Dark title bar matching the page, and Deo's orb as the icon."""
+        """Liquid-glass window: Windows 11 acrylic behind a transparent page
+        (your desktop shows through, blurred), dark title bar, Deo's icon."""
         try:
             hwnd = int(self.window.native.Handle.ToInt64())
             dwm = ctypes.windll.dwmapi
             on = ctypes.c_int(1)
-            dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(on), ctypes.sizeof(on))
-            colour = ctypes.c_int(0x0a0707)                      # COLORREF (BGR) of #07070a
-            dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(colour), ctypes.sizeof(colour))
+            dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(on), ctypes.sizeof(on))   # dark mode
+            try:
+                from System.Drawing import Color
+                self.window.native.BackColor = Color.Black      # black = see-through in the glass frame
+
+                class MARGINS(ctypes.Structure):
+                    _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
+                dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(MARGINS(-1, -1, -1, -1)))
+                acrylic = ctypes.c_int(3)                          # DWMSBT_TRANSIENTWINDOW
+                dwm.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(acrylic), ctypes.sizeof(acrylic))
+            except Exception as e:
+                print(f"[gui] acrylic backdrop unavailable: {e}")
             ico = os.path.join(WEBUI_DIR, "deo.ico")
             if not os.path.exists(ico):
                 make_icon_image(256).save(ico, sizes=[(16, 16), (32, 32), (48, 48), (256, 256)])
