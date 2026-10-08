@@ -111,6 +111,7 @@ class WakeWordListener:
         # Set by main.py: returns what Deo is saying right now, or "" when it
         # isn't speaking. Used by _confirm() during barge-in.
         self.playback_text = lambda: ""
+        self._pb = None   # barge-in diagnostics, see _track_playback
         keep = int(getattr(config, "WAKE_VERIFY_SECONDS", 2.0) * 16000 / FRAME_SAMPLES)
         self._recent = collections.deque(maxlen=max(1, keep))
 
@@ -125,6 +126,7 @@ class WakeWordListener:
                 frame = frame.flatten()
                 self._recent.append(frame)
                 predictions = self._model.predict(frame)
+                self._track_playback(frame, predictions)
 
                 for name, score in predictions.items():
                     gate = self._gates[name]
@@ -145,6 +147,25 @@ class WakeWordListener:
                     # -- into the detector, so throw it away and start clean.
                     self._flush(stream)
                     break
+
+    def _track_playback(self, frame, predictions):
+        """Barge-in diagnostics: while Deo is talking, record the loudest
+        wake score and what the mic actually hears, and print one summary line
+        when Deo stops. Tells apart "the model hears you but scores low" from
+        "the mic is being muted during playback" (driver echo cancellation)."""
+        speaking = bool(self.playback_text())
+        if speaking:
+            if self._pb is None:
+                self._pb = {"start": time.monotonic(), "peak_score": 0.0, "levels": []}
+            self._pb["peak_score"] = max(self._pb["peak_score"], max(predictions.values(), default=0.0))
+            self._pb["levels"].append(float(np.sqrt(np.mean((frame.astype(np.float32) / 32768.0) ** 2))))
+        elif self._pb is not None:
+            levels = np.array(self._pb["levels"]) if self._pb["levels"] else np.zeros(1)
+            db = lambda x: 20 * np.log10(max(float(x), 1e-6))
+            print(f"[wakeword] while Deo spoke ({time.monotonic() - self._pb['start']:.0f}s): "
+                  f"peak wake score {self._pb['peak_score']:.2f}, mic level median {db(np.median(levels)):.0f} dBFS, "
+                  f"loudest {db(levels.max()):.0f} dBFS")
+            self._pb = None
 
     def _confirm(self, stream) -> bool:
         """Ask Whisper whether "Deo" was actually said. See config.WAKE_VERIFY."""

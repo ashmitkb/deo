@@ -334,6 +334,18 @@ def main():
         + ("Groq (cloud) primary, local fallback ready." if config.GROQ_API_KEY else "Running fully local -- no GROQ_API_KEY set.")
     )
 
+    # Timers/reminders announce themselves -- even mid-conversation, they
+    # just wait for Deo to finish its current sentence.
+    from deo import timers
+
+    def announce(text):
+        print(f"[timer] {text}")
+        gui.push_assistant_message(text)
+        with speech_lock:
+            tts.speak(text)
+    timers.on_fire = announce
+    timers.start()
+
     screen_qa.register(brain, gui)  # arms the hotkeys in the background
 
     # tts.stop() rather than sd.stop(): streamed speech plays through its own

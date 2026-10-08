@@ -44,3 +44,4 @@ logs/
 
 # Third-party clone used only by training (github.com/rhasspy/piper-sample-generator)
 piper-sample-generator/
+deo/timers.json

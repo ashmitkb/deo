@@ -24,6 +24,7 @@ import win32con
 import win32api
 from . import config
 from . import Memory
+from . import timers
 
 
 # ---------------------------------------------------------------------------
@@ -975,6 +976,66 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "set_timer",
+            "description": "Start a countdown timer. Deo announces it out loud when it finishes. Use for 'set a timer for 10 minutes', 'timer for the pasta, 8 minutes'.",
+            "parameters": {
+                "type": "object",
+                "properties": {"minutes": {"type": "number", "description": "Minutes (can be combined with seconds/hours)"}, "seconds": {"type": "number", "description": "Seconds"}, "hours": {"type": "number", "description": "Hours"}, "label": {"type": "string", "description": "Optional name, e.g. 'pasta'"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_reminder",
+            "description": "Remind the user of something at a clock time or after a delay. Deo says it out loud when due. Use for 'remind me at 6:30 to call mom' (at='6:30 pm') or 'remind me in 45 minutes to stretch' (in_minutes=45).",
+            "parameters": {
+                "type": "object",
+                "properties": {"message": {"type": "string", "description": "What to remind them about"}, "at": {"type": "string", "description": "Clock time like '18:30' or '6:30 pm' (next occurrence)"}, "in_minutes": {"type": "number", "description": "Or: minutes from now"}},
+                "required": ["message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_timers",
+            "description": "List the timers and reminders that are set, with time left.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_timer",
+            "description": "Cancel a timer or reminder by its label or words in it, or 'all'. Empty cancels the next one due.",
+            "parameters": {
+                "type": "object",
+                "properties": {"which": {"type": "string", "description": "Label/words to match, or 'all'"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_date_time",
+            "description": "Get the current date and time. You have no clock of your own -- call this whenever the answer depends on the current time or date.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_code_file",
             "description": "Run a script (.py, .js, .bat, .ps1) in a new visible terminal window that stays open, so the user can type into input() prompts and see the output. Use this whenever the user asks to run code or a script you created -- NOT run_command, which can't take keyboard input. Bare names are found in DeoProjects, Downloads, Desktop and Documents.",
             "parameters": {
@@ -1065,5 +1126,10 @@ TOOL_REGISTRY = {
     "delete_file": delete_file,
     "create_code_file": create_code_file,
     "run_code_file": run_code_file,
+    "set_timer": timers.set_timer,
+    "set_reminder": timers.set_reminder,
+    "list_timers": timers.list_timers,
+    "cancel_timer": timers.cancel_timer,
+    "get_date_time": timers.get_date_time,
     "move_active_window": move_active_window,
 }

@@ -96,9 +96,28 @@ _EMOJI = re.compile(
 )
 
 
+# Markdown. The 9B model formats answers for reading even when told they'll be
+# spoken, and Kokoro read "**Origins:**" out as "asterisk asterisk origins".
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")                 # [text](url) -> text
+# Underscores only count at word edges, as in real markdown -- otherwise
+# "snake_case_name" lost its underscores.
+_MD_EMPHASIS = re.compile(r"(\*\*|\*|(?<!\w)__|(?<!\w)_)(?=\S)(.+?)(?<=\S)\1(?!\w)")
+_MD_LINE_PREFIX = re.compile(r"^\s*(#{1,6}\s+|[-*+•]\s+|>\s*|\d+[.)]\s+)", re.M)
+_MD_LEFTOVER = re.compile(r"\*{2,}|#{2,}|`+|^\s*[-*_]{3,}\s*$|\|", re.M)
+
+
+def _strip_markdown(text: str) -> str:
+    text = _MD_LINK.sub(r"\1", text)
+    text = _MD_LINE_PREFIX.sub("", text)
+    for _ in range(2):                       # nested: ***x*** / **_x_**
+        text = _MD_EMPHASIS.sub(r"\2", text)
+    return _MD_LEFTOVER.sub(" ", text)
+
+
 def _clean_for_speech(text: str) -> str:
     """Strip/convert markup so the synthesiser doesn't read out backslashes,
     braces, and symbols literally."""
+    text = _strip_markdown(text)
     text = _MATH_DELIMS.sub("", text)
     text = _DOLLARS.sub("", text)
     text = _FRAC.sub(r"\1 over \2", text)

@@ -381,6 +381,8 @@ MEMORY_FILE = _path("deo", "memory.json")
 CONVERSATION_FILE = _path("deo", "conversation.json")
 CONVERSATION_KEEP_MESSAGES = 12
 CONVERSATION_RESUME_HOURS = 6
+# Timers and reminders, so one set for tonight survives a restart.
+TIMERS_FILE = _path("deo", "timers.json")
 
 # --- Assistant identity ---
 ASSISTANT_NAME = "Deo"
