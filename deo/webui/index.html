@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-state="idle">
+  <div class="backdrop" aria-hidden="true">
+    <div class="aura aura-1"></div>
+    <div class="aura aura-2"></div>
+    <div class="aura aura-3"></div>
+    <div class="grain"></div>
+  </div>
+
+  <header class="top">
+    <div class="orb" aria-hidden="true">
+      <div class="orb-fluid">
+        <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span>
+      </div>
+      <div class="orb-glass"></div>
+    </div>
+    <div class="heading">
+      <h1>DEO</h1>
+      <div class="state-line"><span class="pulse"></span><span id="state">IDLE</span></div>
+      <div id="info" class="info">Starting up…</div>
+    </div>
+    <button id="pause" class="chip chip-ghost" type="button">Pause</button>
+  </header>
+
+  <main id="chat" class="chat" aria-live="polite">
+    <div class="empty" id="empty">
+      <div class="empty-kicker">YOUR LOCAL ASSISTANT</div>
+      <div class="empty-title">Say <em>“hey Deo”</em><br>or type below.</div>
+    </div>
+  </main>
+
+  <footer class="bottom">
+    <div class="controls">
+      <button id="stop" class="chip chip-danger" type="button">Stop talking</button>
+      <span class="hint">☝ right · ✌ left · F9 talk · F10 stop</span>
+    </div>
+    <form id="composer" class="composer" autocomplete="off">
+      <input id="input" type="text" placeholder="Ask Deo anything…" spellcheck="false">
+      <button id="send" type="submit" aria-label="Send">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 12h12M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </form>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

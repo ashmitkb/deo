@@ -511,6 +511,12 @@ APP_FUZZY_MATCH_CUTOFF = 0.6
 # 2. First run downloads the hand landmark model (~one-time, needs internet
 #    that one time) to GESTURE_MODEL_PATH. Detection itself runs fully
 #    offline afterwards, same as everything else in Deo.
+# --- The Deo window ---
+# "web": deo/webui/ (HTML/CSS) in a native window via pywebview + Edge WebView2
+#        -- bold dark + lime, Anton/Inter, live markdown.
+# "tk":  the original Tkinter window (also used automatically if web fails).
+GUI_STYLE = "web"
+
 # --- The island (deo/island.py) ---
 # Siri / Dynamic-Island style glass pill that drops from the top of the main
 # screen while the Deo window is closed. Never takes focus or clicks. Long

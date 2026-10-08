@@ -233,8 +233,59 @@ class PillButton(tk.Canvas):
         self._draw(self._bg)
 
 
+# --- island routing shared by every window implementation ----------------
+class IslandRouting:
+    """What goes to the island vs the window. Shared by the Tk window below
+    and the web window (gui_web.py); both provide self._queue, self.island,
+    self.is_gaming, self._window_shown, self._handed_off and request_show()."""
+
+    # Replies longer than this, or with code / a list in them, open the full
+    # window instead of squeezing into the island (unless a game is running).
+    ISLAND_MAX_CHARS = 260
+
+    def _to_island(self, kind, payload=None):
+        if self.island is not None and not self._window_shown:
+            self.island.post(kind, payload)
+
+    @classmethod
+    def _is_big(cls, text):
+        return len(text) > cls.ISLAND_MAX_CHARS or "```" in text or text.count("\n") >= 3
+
+    def push_user_message(self, text):
+        self._queue.put(("user", text))
+        self._handed_off = False
+        self._to_island("user", text)
+
+    def push_reply_chunk(self, text_so_far):
+        """The reply as spoken so far -- streams into the window and the island."""
+        self._queue.put(("stream", text_so_far))
+        if self._handed_off or self.island is None or self._window_shown:
+            return
+        if self._is_big(text_so_far) and not self.is_gaming():
+            self._handed_off = True
+            self.island.post("notice", "Full answer in the Deo window")
+            self.request_show(focus=False)
+        else:
+            self.island.post("reply", text_so_far)
+
+    def push_assistant_message(self, text):
+        self._queue.put(("assistant", text))
+        if not self._handed_off:
+            self._to_island("reply", text)
+
+    def push_system_message(self, text, island=False):
+        """island=True also flashes it on the island (gestures, alerts)."""
+        self._queue.put(("system", text))
+        if island:
+            self._to_island("notice", text)
+
+    def push_status(self, status):
+        self._queue.put(("status", status))
+        self._to_island("status", status)
+
+
 # --- the window ----------------------------------------------------------
-class DeoGUI:
+class DeoGUI(IslandRouting):
     def __init__(self, assistant_name="Deo", on_text_submit=None, on_stop=None,
                  on_pause_toggle=None, start_hidden=False):
         """
@@ -397,50 +448,6 @@ class DeoGUI:
             self.root.destroy()
 
     # ---- thread-safe public API -----------------------------------------
-    # Replies longer than this, or with code / a list in them, open the full
-    # window instead of squeezing into the island (unless a game is running).
-    ISLAND_MAX_CHARS = 260
-
-    def _to_island(self, kind, payload=None):
-        if self.island is not None and not self._window_shown:
-            self.island.post(kind, payload)
-
-    @classmethod
-    def _is_big(cls, text):
-        return len(text) > cls.ISLAND_MAX_CHARS or "```" in text or text.count("\n") >= 3
-
-    def push_user_message(self, text):
-        self._queue.put(("user", text))
-        self._handed_off = False
-        self._to_island("user", text)
-
-    def push_reply_chunk(self, text_so_far):
-        """The reply as spoken so far -- streams into the window and the island."""
-        self._queue.put(("stream", text_so_far))
-        if self._handed_off or self.island is None or self._window_shown:
-            return
-        if self._is_big(text_so_far) and not self.is_gaming():
-            self._handed_off = True
-            self.island.post("notice", "Full answer in the Deo window")
-            self.request_show(focus=False)
-        else:
-            self.island.post("reply", text_so_far)
-
-    def push_assistant_message(self, text):
-        self._queue.put(("assistant", text))
-        if not self._handed_off:
-            self._to_island("reply", text)
-
-    def push_system_message(self, text, island=False):
-        """island=True also flashes it on the island (gestures, alerts)."""
-        self._queue.put(("system", text))
-        if island:
-            self._to_island("notice", text)
-
-    def push_status(self, status):
-        self._queue.put(("status", status))
-        self._to_island("status", status)
-
     def push_info(self, text):
         """Small line under the status: brain model, next timer, etc."""
         self._queue.put(("info", text))

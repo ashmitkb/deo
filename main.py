@@ -379,7 +379,16 @@ def main(start_hidden: bool = False):
 
     # GUI must be built on the main thread (Tkinter requirement). Background
     # threads only ever reach it through the thread-safe push_* methods.
-    gui = DeoGUI(
+    # The web window (deo/webui, shown through Edge WebView2) by default; the
+    # Tk window if that can't load for any reason.
+    GuiClass = DeoGUI
+    if getattr(config, "GUI_STYLE", "web") == "web":
+        try:
+            from deo.gui_web import DeoWebGUI
+            GuiClass = DeoWebGUI
+        except Exception as e:
+            print(f"[gui] web window unavailable ({e}), using the classic window")
+    gui = GuiClass(
         assistant_name=config.ASSISTANT_NAME,
         on_text_submit=lambda text: _ask_and_speak(brain, gui, text),
         on_stop=lambda: (tts.stop(), gui.push_status("idle")),

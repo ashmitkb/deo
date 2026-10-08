@@ -48,3 +48,4 @@ deo/timers.json
 
 # Speaker model (re-downloadable) and your voiceprint (personal)
 deo/speaker/
+deo/webui/deo.ico

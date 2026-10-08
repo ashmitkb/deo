@@ -722,6 +722,20 @@ def test_claimed_action_is_enforced():
             tools_mod.TOOL_REGISTRY["open_app"] = original
 
 
+def test_web_window_matches_api():
+    print("\nthe web window offers everything main.py and the tray use")
+    from deo.gui_web import DeoWebGUI
+    needed = ["push_user_message", "push_reply_chunk", "push_assistant_message", "push_system_message",
+              "push_status", "push_info", "push_paused", "request_show", "request_toggle_visible",
+              "request_quit", "run"]
+    missing = [m for m in needed if not callable(getattr(DeoWebGUI, m, None))]
+    check("all window methods exist", not missing, str(missing))
+    page = os.path.join(PROJECT_ROOT, "deo", "webui")
+    check("the page, styles, script and fonts are all there",
+          all(os.path.exists(os.path.join(page, f)) for f in
+              ("index.html", "style.css", "app.js", "fonts/Anton-Regular.ttf", "fonts/Inter.ttf")))
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -832,6 +846,7 @@ def main():
                  test_conversation_survives_restart, test_timers,
                  test_interrupted_reply_is_remembered, test_speaker_check, test_island_handoff,
                  test_island_frame_reaches_windows, test_claimed_action_is_enforced,
+                 test_web_window_matches_api,
                  test_vad):
         try:
             test()

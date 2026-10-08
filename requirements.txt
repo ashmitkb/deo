@@ -8,6 +8,7 @@ nvidia-cudnn-cu12
 kokoro-onnx           # local TTS voice. Model files go in deo/kokoro/ -- see README
 livekit               # WebRTC echo canceller -- installed, evaluated, not currently used
 pystray               # tray icon (show/hide, pause listening, quit)
+pywebview             # the Deo window (deo/webui) via Edge WebView2
 sherpa-onnx           # speaker check: only answer the owner. Model in deo/speaker/ (see config)
 openwakeword          # local wake word
 groq                  # cloud LLM + STT + TTS (all optional at runtime)
