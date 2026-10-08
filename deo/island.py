@@ -31,7 +31,7 @@ import random
 import threading
 import time
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 # palette per state: (core, rim colours...)
 PALETTES = {
@@ -134,6 +134,39 @@ def _push_frame(hwnd, img, x, y):
     _gdi32.DeleteObject(hbmp)
     _gdi32.DeleteDC(mem_dc)
     _user32.ReleaseDC(0, screen_dc)
+
+
+# ---------------------------------------------------------------- anti-aliasing
+# PIL draws shapes WITHOUT anti-aliasing -- the first live island had visibly
+# stair-stepped edges. Each shape is drawn at SUPERSAMPLE x size, only over its
+# own bounding box, and box-filtered back down: the same smooth edges text has.
+SUPERSAMPLE = 4
+
+
+def _aa_mask(size, bbox, draw):
+    W, H = size
+    x1, y1 = math.floor(bbox[0]) - 2, math.floor(bbox[1]) - 2
+    x2, y2 = math.ceil(bbox[2]) + 2, math.ceil(bbox[3]) + 2
+    rw, rh = max(1, x2 - x1), max(1, y2 - y1)
+    big = Image.new("L", (rw * SUPERSAMPLE, rh * SUPERSAMPLE), 0)
+    draw(ImageDraw.Draw(big), lambda v, o: (v - o) * SUPERSAMPLE, x1, y1)
+    small = big.resize((rw, rh), Image.BOX)
+    mask = Image.new("L", (W, H), 0)
+    mask.paste(small, (x1, y1))
+    return mask
+
+
+def _aa_rrect(size, box, radius):
+    def draw(d, sc, ox, oy):
+        d.rounded_rectangle((sc(box[0], ox), sc(box[1], oy), sc(box[2], ox), sc(box[3], oy)),
+                            radius * SUPERSAMPLE, fill=255)
+    return _aa_mask(size, box, draw)
+
+
+def _aa_ellipse(size, box):
+    def draw(d, sc, ox, oy):
+        d.ellipse((sc(box[0], ox), sc(box[1], oy), sc(box[2], ox), sc(box[3], oy)), fill=255)
+    return _aa_mask(size, box, draw)
 
 
 # ---------------------------------------------------------------- the island
@@ -339,19 +372,17 @@ class Island:
         radius = min(h / 2, 28 * s)
         frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
-        # soft drop shadow (rendered at half resolution, then scaled up)
+        # soft drop shadow (blurred anyway, so half resolution is plenty)
         sw, sh = W // 2, H // 2
         sm = Image.new("L", (sw, sh), 0)
         ImageDraw.Draw(sm).rounded_rectangle([c / 2 for c in (box[0], box[1] + 8 * s, box[2], box[3] + 8 * s)],
                                              radius / 2, fill=int(150 * a))
-        sm = sm.filter(ImageFilter.GaussianBlur(9 * s)).resize((W, H))
+        sm = sm.filter(ImageFilter.GaussianBlur(9 * s)).resize((W, H), Image.BILINEAR)
         frame.paste((0, 0, 0, 255), (0, 0), sm)
 
-        # the glass body
-        body = Image.new("L", (W, H), 0)
-        ImageDraw.Draw(body).rounded_rectangle(box, radius, fill=255)
-        glass = Image.new("RGBA", (W, H), (16, 17, 24, int(232 * a)))
-        frame.paste(glass, (0, 0), body)
+        # the glass body -- anti-aliased edge
+        body = _aa_rrect((W, H), box, radius)
+        frame.paste((16, 17, 24, int(232 * a)), (0, 0), body)
 
         # flowing liquid rim: soft colour blobs, blurred, seen only near the edge
         core, colours = PALETTES.get(self.state, PALETTES["idle"])
@@ -370,31 +401,25 @@ class Island:
             bx = cx + math.cos(ph) * rw * 0.92
             by = cy + math.sin(ph) * rh * 0.92
             d.ellipse([bx - r, by - r, bx + r, by + r], fill=_rgb(col))
-        blobs = blobs.filter(ImageFilter.GaussianBlur(max(2, bw / 30))).resize((W, H))
-        inset = Image.new("L", (W, H), 0)
-        ImageDraw.Draw(inset).rounded_rectangle(
-            (box[0] + 2.2 * s, box[1] + 2.2 * s, box[2] - 2.2 * s, box[3] - 2.2 * s),
-            max(1, radius - 2.2 * s), fill=255)
-        ring = Image.eval(Image.composite(Image.new("L", (W, H), 0), body, inset), lambda v: v)
-        ring = ring.filter(ImageFilter.GaussianBlur(0.8 * s))
-        inner = Image.new("L", (W, H), 0)
-        ImageDraw.Draw(inner).rounded_rectangle(
-            (box[0] + 11 * s, box[1] + 11 * s, box[2] - 11 * s, box[3] - 11 * s),
-            max(1, radius - 11 * s), fill=255)
-        glow = Image.composite(Image.new("L", (W, H), 0), body, inner).filter(ImageFilter.GaussianBlur(6 * s))
+        blobs = blobs.filter(ImageFilter.GaussianBlur(max(2, bw / 30))).resize((W, H), Image.BILINEAR)
+
+        rim_w = 2.0 * s
+        inset = _aa_rrect((W, H), (box[0] + rim_w, box[1] + rim_w, box[2] - rim_w, box[3] - rim_w),
+                          max(1, radius - rim_w))
+        ring = ImageChops.subtract(body, inset)                 # crisp, anti-aliased rim
+        inner = _aa_rrect((W, H), (box[0] + 11 * s, box[1] + 11 * s, box[2] - 11 * s, box[3] - 11 * s),
+                          max(1, radius - 11 * s))
+        glow = ImageChops.subtract(body, inner).filter(ImageFilter.GaussianBlur(6 * s))
         pulse = 0.75 + 0.25 * math.sin(t * (6 if self.state == "speaking" else 2.4))
-        rim_alpha = Image.eval(ring, lambda v: int(v * 0.95 * a))
-        glow_alpha = Image.eval(glow, lambda v: int(v * 0.32 * a * pulse))
-        frame.paste(blobs, (0, 0), glow_alpha)
-        frame.paste(blobs, (0, 0), rim_alpha)
+        frame.paste(blobs, (0, 0), glow.point(lambda v: int(v * 0.32 * a * pulse)))
+        frame.paste(blobs, (0, 0), ring.point(lambda v: int(v * 0.95 * a)))
 
         # top sheen: a smooth vertical fade inside the glass, no hard edge
         grad = Image.linear_gradient("L").resize((1, 256)).transpose(Image.FLIP_TOP_BOTTOM)
         grad = grad.point(lambda v: int(v * v / 255 * 0.09 * a)).resize((W, max(1, int(h * 0.6))))
         sheen = Image.new("L", (W, H), 0)
         sheen.paste(grad, (0, int(y)))
-        sheen = Image.composite(sheen, Image.new("L", (W, H), 0), inset)
-        frame.paste((255, 255, 255, 255), (0, 0), sheen)
+        frame.paste((255, 255, 255, 255), (0, 0), ImageChops.multiply(sheen, inset))
 
         # content (only once the pill is big enough to hold it)
         if w > 120 * s and h > 40 * s and a > 0.3:
@@ -406,9 +431,10 @@ class Island:
             ImageDraw.Draw(halo).ellipse((ocx - orb_r * 2, ocy - orb_r * 2, ocx + orb_r * 2, ocy + orb_r * 2),
                                          fill=int(120 * a))
             frame.paste(_rgb(core) + (255,), (0, 0), halo.filter(ImageFilter.GaussianBlur(5 * s)))
-            dr.ellipse((ocx - orb_r, ocy - orb_r, ocx + orb_r, ocy + orb_r), fill=_rgb(core) + (ta,))
-            dr.ellipse((ocx - orb_r * .55, ocy - orb_r * .7, ocx - orb_r * .05, ocy - orb_r * .2),
-                       fill=(255, 255, 255, int(ta * .45)))
+            orb = _aa_ellipse((W, H), (ocx - orb_r, ocy - orb_r, ocx + orb_r, ocy + orb_r))
+            frame.paste(_rgb(core) + (255,), (0, 0), orb.point(lambda v: v * ta // 255))
+            shine = _aa_ellipse((W, H), (ocx - orb_r * .55, ocy - orb_r * .7, ocx - orb_r * .05, ocy - orb_r * .2))
+            frame.paste((255, 255, 255, 255), (0, 0), shine.point(lambda v: int(v * ta * .45 / 255)))
 
             label, lines = self._content()
             tx = box[0] + 50 * s
