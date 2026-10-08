@@ -280,7 +280,9 @@ def open_app(app_name: str) -> dict:
 
 
 def open_url_in_browser(url: str, browser_name: str = "") -> dict:
-    """Open a URL, optionally in a specific browser (e.g. 'brave', 'chrome')."""
+    """Open a URL, optionally in a specific browser (e.g. 'brave', 'chrome').
+    No browser named -> config.DEFAULT_BROWSER (Brave)."""
+    browser_name = browser_name or getattr(config, "DEFAULT_BROWSER", "")
     if browser_name.strip():
         browser_key = _resolve_registry_key(browser_name, set(config.APP_PATH_REGISTRY))
         browser_path = config.APP_PATH_REGISTRY.get(browser_key)

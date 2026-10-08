@@ -448,6 +448,9 @@ the user a permission popup they must click. So when the user asks for something
 call the tool; don't refuse it yourself, and tell them to check the popup. If a result says the user
 denied permission or the action is blocked, accept it: say so, and never retry it another way.
 
+WEBSITES: to open a site, always use open_url_in_browser -- never run_command with "start ...".
+The user's browser is Brave; only use another browser if they name it.
+
 FILES: to delete, use delete_file with the name directly. To find a file, use search_files --
 never list_directory on a big folder like Downloads, the listing gets cut off.
 
@@ -473,6 +476,10 @@ APP_PROTOCOL_REGISTRY = {
     "spotify": "spotify:",
     "discord": "discord://",
 }
+
+# Browser for open_url_in_browser when none is named. A test run once opened a
+# site in Chrome via run_command("start chrome ...") instead.
+DEFAULT_BROWSER = "brave"
 
 # --- YouTube Data API ---
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")

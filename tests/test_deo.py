@@ -700,6 +700,28 @@ def test_island_frame_reaches_windows():
         win32gui.ShowWindow = real_show
 
 
+def test_claimed_action_is_enforced():
+    print("\nclaiming an action without doing it gets corrected")
+    from deo.brain import claims_action
+    check("'I'm opening X' counts as a claim", claims_action("I'm opening amazon.in in Brave."))
+    check("a plain fact doesn't", not claims_action("The capital of India is New Delhi."))
+    ran = []
+    from deo import tools as tools_mod
+    original = tools_mod.TOOL_REGISTRY.get("open_app")
+    try:
+        tools_mod.TOOL_REGISTRY["open_app"] = lambda **kw: ran.append(kw) or {"success": True, "message": "Opened."}
+        brain, spoken, rounds = fake_turn(None, rounds=[
+            (["I'm opening Brave for you now."], []),                                   # lies: no tool
+            ([], [{"id": "c1", "name": "open_app", "arguments": {"app_name": "brave"}}]),  # corrected
+            (["Brave's open."], []),
+        ])
+        check("the retry makes the action actually happen", ran == [{"app_name": "brave"}], str(ran))
+        check("and it took exactly one retry", rounds == 3, str(rounds))
+    finally:
+        if original:
+            tools_mod.TOOL_REGISTRY["open_app"] = original
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -809,7 +831,7 @@ def main():
                  test_kokoro_fallback, test_everything_compiles, test_finger_poses, test_code_never_spoken, test_barge_in, test_code_file_newlines, test_game_mode_and_barge_in_verifier, test_prompt_echo,
                  test_conversation_survives_restart, test_timers,
                  test_interrupted_reply_is_remembered, test_speaker_check, test_island_handoff,
-                 test_island_frame_reaches_windows,
+                 test_island_frame_reaches_windows, test_claimed_action_is_enforced,
                  test_vad):
         try:
             test()

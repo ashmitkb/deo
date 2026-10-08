@@ -181,6 +181,22 @@ def _parse_arguments(raw):
 # Streaming safety
 # ---------------------------------------------------------------------------
 
+_ACTION_CLAIM = re.compile(
+    r"\b(i'?m|i am|i'?ve|i have|i'?ll|i will|let me)\s+(now\s+|just\s+|go ahead and\s+)?"
+    r"(open|launch|start|clos|set|creat|run|delet|mov|search|look|check|play|turn)\w*"
+    r"|\b(has|have) been\s+(opened|closed|set|launched|created|deleted|moved|started)\b"
+    r"|\b(is|are) now\s+(open|closed|running|set|playing)\b"
+    r"|\b(timer|reminder|alarm) (is |has been )?set\b"
+    r"|\b\w+'s (now )?open\b",
+    re.IGNORECASE)
+
+
+def claims_action(text: str) -> bool:
+    """Does a reply say Deo did (or is doing) something? Used to catch the
+    model narrating an action it never actually took."""
+    return bool(text) and bool(_ACTION_CLAIM.search(text))
+
+
 class _SpeechGuard:
     """Turns a stream of raw model deltas into sentences that are safe to speak.
 
@@ -609,6 +625,8 @@ class Brain:
         self.history.append({"role": "user", "content": user_text})
 
         final_text = ""
+        tools_called = False
+        corrected = False
         # finally, not except: if the stream dies or the caller stops consuming
         # part-way, the turn still has to leave history in a coherent state --
         # a user message with no assistant reply behind it would corrupt every
@@ -632,9 +650,24 @@ class Brain:
                 result = yield from self._guarded_stream(tools, guard)
 
                 if not result["tool_calls"]:
+                    # Claimed an action but never called a tool -- the 9B model
+                    # said "I'm opening amazon.in in Brave" and opened nothing.
+                    # Once, hand it back: do it for real, or admit it can't.
+                    if (not tools_called and not corrected and not last_round
+                            and claims_action(guard.text)):
+                        corrected = True
+                        print(f"[brain] claimed an action without doing it, retrying: {guard.text[:80]!r}")
+                        self.history.append({"role": "assistant", "content": guard.text})
+                        self.history.append({"role": "user", "content": (
+                            "[Automatic check, not from the user: your last reply said you did or are "
+                            "doing something, but you called no tool, so NOTHING happened. If it can be "
+                            "done, call the right tool now. If not, say in one short sentence that you "
+                            "couldn't. Don't apologise at length.]")})
+                        continue
                     # The model stopped reaching for tools, so this is the answer.
                     final_text = guard.text
                     break
+                tools_called = True
 
                 self.history.append({
                     "role": "assistant",
