@@ -47,7 +47,10 @@ body {
 h1 { font-weight: 600; font-size: 30px; letter-spacing: -0.6px; line-height: 1.05; }
 .state { margin-top: 3px; font-size: 13px; color: var(--ink-2); }
 
-/* the state glyph: same as the island -- waveform, three dots, or one dot */
+/* the living blob (drawn in app.js) */
+.blob { width: 64px; height: 64px; flex: none; filter: drop-shadow(0 8px 18px rgba(0, 0, 0, .45)); }
+
+/* (older state glyph, kept for reference -- no longer in the page) */
 .indicator {
   position: relative; width: 52px; height: 52px; flex: none; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; gap: 3px;
