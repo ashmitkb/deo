@@ -50,7 +50,12 @@ def _running_exes() -> list:
 _FULLSCREEN_OK = {"brave.exe", "chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "arc.exe",
                   "vlc.exe", "mpc-hc64.exe", "wmplayer.exe", "media.player.exe", "powerpnt.exe",
                   "code.exe", "pycharm64.exe", "explorer.exe", "applicationframehost.exe",
-                  "obs64.exe", "resolve.exe", "python.exe", "pythonw.exe"}
+                  "obs64.exe", "resolve.exe", "python.exe", "pythonw.exe",
+                  # system overlays that cover the screen for a moment -- the
+                  # Snipping Tool was mistaken for a game the first time it ran
+                  "snippingtool.exe", "screenclippinghost.exe", "magnify.exe", "lockapp.exe",
+                  "searchhost.exe", "startmenuexperiencehost.exe", "shellexperiencehost.exe",
+                  "textinputhost.exe", "gamebar.exe", "nvidia overlay.exe", "claude.exe"}
 
 
 def _fullscreen_app() -> str:
