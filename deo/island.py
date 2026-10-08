@@ -145,6 +145,11 @@ SUPERSAMPLE = 4
 
 def _aa_mask(size, bbox, draw):
     W, H = size
+    if bbox[2] - bbox[0] < 1 or bbox[3] - bbox[1] < 1:
+        # An inset shape on a pill that's still tiny (mid drop-in, or the
+        # spring overshooting small on retract) comes out inverted -- PIL
+        # raised "x1 must be greater than or equal to x0". Nothing to draw.
+        return Image.new("L", (W, H), 0)
     x1, y1 = math.floor(bbox[0]) - 2, math.floor(bbox[1]) - 2
     x2, y2 = math.ceil(bbox[2]) + 2, math.ceil(bbox[3]) + 2
     rw, rh = max(1, x2 - x1), max(1, y2 - y1)
@@ -158,8 +163,9 @@ def _aa_mask(size, bbox, draw):
 
 def _aa_rrect(size, box, radius):
     def draw(d, sc, ox, oy):
+        r = max(0, min(radius, (box[2] - box[0]) / 2, (box[3] - box[1]) / 2))
         d.rounded_rectangle((sc(box[0], ox), sc(box[1], oy), sc(box[2], ox), sc(box[3], oy)),
-                            radius * SUPERSAMPLE, fill=255)
+                            r * SUPERSAMPLE, fill=255)
     return _aa_mask(size, box, draw)
 
 

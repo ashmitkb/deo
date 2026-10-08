@@ -685,6 +685,14 @@ def test_island_frame_reaches_windows():
         frame = it._draw(_t.monotonic())
         isl._push_frame(it.hwnd, frame, it.win_x, it.win_y)
         check("a frame is pushed to a layered window without error", True)
+        bad = []
+        for w_, h_ in ((4, 4), (20, 10), (30, 18), (44, 30), (60, 22)):   # tiny / mid-animation sizes
+            it.w, it.h = isl.Spring(w_ * s), isl.Spring(h_ * s)
+            try:
+                it._draw(_t.monotonic())
+            except Exception as e:
+                bad.append((w_, h_, repr(e)))
+        check("tiny mid-animation sizes draw without errors", not bad, str(bad))
         win32gui.DestroyWindow(it.hwnd)
     except Exception as e:
         check("a frame is pushed to a layered window without error", False, repr(e))
