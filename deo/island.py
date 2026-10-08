@@ -434,8 +434,7 @@ class Island:
 
           dropping in : the pill hangs from the top edge of the screen on a
                         neck that thins and snaps ~0.4s after it appears
-          pulled      : a droplet of glass stretches down below the pill on a
-                        neck that thins the further you pull
+          (being pulled moves the whole island down -- see _draw)
         """
         s, W, H = self.s, self.W, self.H
         base = Image.new("L", (W, H), 0)
@@ -451,14 +450,6 @@ class Island:
                                 neck / 2, fill=255)
             rw = neck * 2.6                                   # the reservoir at the screen edge
             d.ellipse((cx - rw / 2, -rw * 0.55, cx + rw / 2, rw * 0.22), fill=255)
-
-        if pull > 2 * s:
-            grow = min(1.0, pull / (70 * s))
-            r = min((box[3] - box[1]) * 0.55, 30 * s) * (0.55 + 0.45 * grow)
-            by = box[3] + pull - r * 0.4                      # the droplet hangs below the pill
-            d.ellipse((cx - r, by - r, cx + r, by + r), fill=255)
-            stem = r * 1.25 * max(0.28, 1 - pull / (260 * s))  # thins as it stretches
-            d.rounded_rectangle((cx - stem / 2, box[3] - radius, cx + stem / 2, by), stem / 2, fill=255)
 
         field = _soft(base, 7 * s)
         return field.point(_LUT_BODY), field.point(_LUT_INSET)
@@ -557,7 +548,12 @@ class Island:
         # squash & stretch: a moving drop gets taller and thinner, then squashes
         st = max(-0.16, min(0.3, self.y.velocity / (1500 * s)))
         h, w = h * (1 + st), w * (1 - st * 0.45)
+        # being pulled: the whole island follows the cursor down, stretching a
+        # little (a hanging droplet was tried and didn't look right)
         pull = max(0.0, self.pull.value)
+        y += pull
+        h *= 1 + min(0.12, pull / (800 * s))
+        w *= 1 - min(0.05, pull / (1600 * s))
         x0 = (W - w) / 2
         box = (x0, y, x0 + w, y + h)
         frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
