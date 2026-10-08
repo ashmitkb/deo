@@ -193,6 +193,15 @@ class WakeWordListener:
         accepted, text = stt.verify_wake(audio)
         took = time.monotonic() - t0
         if accepted:
+            # Right words -- but whose voice? Skipped while Deo is talking: a
+            # barge-in mixes your voice with Deo's, which would skew the score.
+            if not self.playback_text():
+                from . import speaker
+                mine, score = speaker.is_owner(audio)
+                if not mine:
+                    print(f"[wakeword] rejected: \"hey Deo\" in someone else's voice ({score:.2f})")
+                    self._flush(stream)
+                    return False
             print(f"[wakeword] verified: {text!r} ({took:.2f}s)")
             return True
 

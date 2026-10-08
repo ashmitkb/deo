@@ -602,6 +602,26 @@ def test_interrupted_reply_is_remembered():
     check("an interruption before anything was said adds nothing", len(brain.history) == before)
 
 
+def test_speaker_check():
+    print("\nonly the owner's voice (speaker check)")
+    from deo import speaker
+    check("a clip too short to judge is allowed", speaker.is_owner(np.zeros(4000, np.float32))[0])
+    check("silence is allowed (nothing to judge)", speaker.is_owner(np.zeros(32000, np.float32))[0])
+    saved = (speaker._extractor, speaker._unavailable)
+    try:
+        speaker._extractor, speaker._unavailable = None, True
+        check("no model -> fails open, never deaf to the owner",
+              speaker.is_owner(np.random.default_rng(0).normal(0, .1, 32000).astype(np.float32))[0])
+    finally:
+        speaker._extractor, speaker._unavailable = saved
+    clips = sorted(glob.glob(os.path.join(PROJECT_ROOT, "training", "data", "positive", "*.wav")))
+    if clips and os.path.exists(config.SPEAKER_ENROLLMENT_PATH):
+        with wave.open(clips[0]) as w:
+            audio = np.frombuffer(w.readframes(w.getnframes()), "<i2").astype(np.float32) / 32768
+        ok, score = speaker.is_owner(audio)
+        check("the owner's own recording is accepted", ok, f"score {score}")
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -710,7 +730,7 @@ def main():
                  test_gesture_swipe, test_echo_rejection, test_wake_debounce, test_wake_verifier,
                  test_kokoro_fallback, test_everything_compiles, test_finger_poses, test_code_never_spoken, test_barge_in, test_code_file_newlines, test_game_mode_and_barge_in_verifier, test_prompt_echo,
                  test_conversation_survives_restart, test_timers,
-                 test_interrupted_reply_is_remembered,
+                 test_interrupted_reply_is_remembered, test_speaker_check,
                  test_vad):
         try:
             test()

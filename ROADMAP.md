@@ -70,6 +70,17 @@ providers); ignore its "migration order" section.
   your face no longer counts as "1".
 - **Starts with Windows:** Startup shortcut -> `pythonw run_deo.pyw`, log in
   `logs/deo.log`. A named mutex keeps it to one copy.
+- **New window** (gui.py): animated state orb, chat bubbles, info line, pause
+  and stop buttons, dark title bar. **Tray icon** (tray.py): show/hide, pause,
+  log, quit. Closing the window hides it; `--hidden` starts in the tray and
+  never maps the window, so it can't steal focus from a fullscreen game.
+- **Game mode** also catches `\Games\` installs and any fullscreen app
+  that isn't a browser or editor (it missed RDR2 in C:\Games).
+- **Only the owner's voice** (speaker.py): WeSpeaker ResNet34 via sherpa-onnx,
+  CPU. Voiceprint built from 202 existing recordings
+  (`training/enroll_voice.py`). Threshold 0.60: owner 99.3%, other voices 10%
+  on level-matched synthetic voices. Checked on the wake word and every
+  utterance; skipped during barge-in; fails open.
 - Wallpaper Engine keeps the GPU at ~90% with Deo idle. Pause it while gaming
   or using Deo, or set it to pause when other apps are fullscreen/focused.
 

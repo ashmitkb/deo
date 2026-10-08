@@ -143,6 +143,13 @@ def _listen_and_answer(brain: Brain, gui: DeoGUI, start_timeout: float = None,
         print(f"(ignored own echo: {user_text!r})")
         return None
 
+    from deo import speaker
+    mine, score = speaker.is_owner(audio)
+    if not mine:
+        # Someone else (TV, a video, a person nearby). Stay quiet.
+        print(f"(not your voice ({score:.2f}), ignoring: {user_text!r})")
+        return None
+
     if followup and config.FOLLOWUP_ADDRESSEE_CHECK and not brain.is_addressed_to_me(
             user_text, after_speaking):
         # Said to someone else (a phone call, a person in the room). Stay quiet
@@ -360,6 +367,10 @@ def main(start_hidden: bool = False):
         threading.Thread(target=stt.prewarm, daemon=True).start()
 
     brain = Brain(mcp_bridge=mcp_bridge)
+
+    # Load the voice check now rather than on the first thing you say.
+    from deo import speaker
+    threading.Thread(target=speaker.prewarm, daemon=True).start()
 
     # 9B brain normally, 4B while a game is running (frees the GPU for it).
     from deo import gamemode

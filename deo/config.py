@@ -220,6 +220,18 @@ WAKE_VERIFY_TAIL_SECONDS = 0.3
 WAKE_SAVE_REJECTS = True
 WAKE_REJECTS_DIR = _path("training", "data", "false_wakes")
 
+# --- Only answer the owner's voice (deo/speaker.py) ---
+# A voiceprint check on the wake word and on everything said to Deo, so the TV,
+# a video or someone else in the room can't drive it. Built from your existing
+# recordings by training/enroll_voice.py. Fails open (see speaker.py).
+# 0.60 measured: your clips accepted 99.3%, other voices 10%. Raise to be
+# stricter; lower it if Deo starts ignoring you (the log shows each score).
+SPEAKER_VERIFY = True
+SPEAKER_THRESHOLD = 0.60
+SPEAKER_MIN_SECONDS = 0.8
+SPEAKER_MODEL_PATH = _path("deo", "speaker", "wespeaker_en_voxceleb_resnet34_LM.onnx")
+SPEAKER_ENROLLMENT_PATH = _path("deo", "speaker", "enrollment.npy")
+
 # --- MCP servers ---
 # Each entry launches a local MCP server over stdio and merges its tools into
 # Deo's toolset. Start with 1-2 servers, confirm they work, then add more.
