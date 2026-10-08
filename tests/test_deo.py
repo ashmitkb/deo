@@ -736,6 +736,28 @@ def test_web_window_matches_api():
               ("index.html", "style.css", "app.js", "fonts/Anton-Regular.ttf", "fonts/Inter.ttf")))
 
 
+def test_edge_glow_frames():
+    print("\nSiri-style edge glow renders to real (hidden) windows")
+    import win32gui
+    from deo import edgeglow
+    real_show = win32gui.ShowWindow
+    try:
+        win32gui.ShowWindow = lambda *a: None
+        eg = edgeglow.EdgeGlow()
+        eg._setup()
+        eg.intensity = edgeglow.Spring(1.0)
+        for state in ("listening", "thinking", "speaking"):
+            eg.state, eg.colours = state, edgeglow.PALETTES[state]
+            eg._render(1.0)
+        check("all four edges render in every state", True)
+        for h in eg.hwnds.values():
+            win32gui.DestroyWindow(h)
+    except Exception as e:
+        check("all four edges render in every state", False, repr(e))
+    finally:
+        win32gui.ShowWindow = real_show
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -846,7 +868,7 @@ def main():
                  test_conversation_survives_restart, test_timers,
                  test_interrupted_reply_is_remembered, test_speaker_check, test_island_handoff,
                  test_island_frame_reaches_windows, test_claimed_action_is_enforced,
-                 test_web_window_matches_api,
+                 test_web_window_matches_api, test_edge_glow_frames,
                  test_vad):
         try:
             test()

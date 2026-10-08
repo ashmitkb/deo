@@ -129,6 +129,8 @@ class DeoWebGUI(IslandRouting):
         self._window_shown = True
         if self.island is not None:
             self.island.post("hide")
+        if getattr(self, "edge_glow", None) is not None:
+            self.edge_glow.post("off")
         self.window.show()
         if focus:
             try:

@@ -282,6 +282,10 @@ class IslandRouting:
     def push_status(self, status):
         self._queue.put(("status", status))
         self._to_island("status", status)
+        glow = getattr(self, "edge_glow", None)
+        if glow is not None:
+            # Siri-style screen-edge glow -- only in island mode, like the island
+            glow.post(status if not self._window_shown else "off")
 
 
 # --- the window ----------------------------------------------------------
@@ -502,6 +506,8 @@ class DeoGUI(IslandRouting):
         self._window_shown = True
         if self.island is not None:
             self.island.post("hide")
+        if getattr(self, "edge_glow", None) is not None:
+            self.edge_glow.post("off")
         self.root.deiconify()
         self.root.lift()
         if focus:

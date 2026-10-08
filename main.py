@@ -402,6 +402,9 @@ def main(start_hidden: bool = False):
         try:
             from deo.island import Island
             gui.island = Island().start()
+            if config.EDGE_GLOW_ENABLED:
+                from deo.edgeglow import EdgeGlow
+                gui.edge_glow = EdgeGlow().start()
             from deo import gamemode as _gm
             gui.is_gaming = lambda: bool(_gm.running_game())
         except Exception as e:
@@ -510,6 +513,8 @@ def main(start_hidden: bool = False):
         mcp_bridge.stop()
         if gui.island is not None:
             gui.island.post("quit")
+        if getattr(gui, "edge_glow", None) is not None:
+            gui.edge_glow.post("quit")
         if tray:
             try:
                 tray.icon.stop()

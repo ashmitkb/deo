@@ -522,6 +522,9 @@ GUI_STYLE = "web"
 # screen while the Deo window is closed. Never takes focus or clicks. Long
 # replies open the full window instead (not while a game is running).
 ISLAND_ENABLED = True
+# Siri-style flowing glow around the edges of the main screen while Deo
+# listens / thinks / speaks in island mode (deo/edgeglow.py). Click-through.
+EDGE_GLOW_ENABLED = True
 
 GESTURE_ENABLED = True
 GESTURE_CAMERA_INDEX = 0  # change if the wrong webcam is picked on a multi-camera machine

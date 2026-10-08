@@ -35,11 +35,12 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 # palette per state: (core, rim colours...)
 PALETTES = {
-    "listening": ("#2dd4bf", ["#2dd4bf", "#38bdf8", "#22d3ee", "#a7f3d0"]),
-    "thinking":  ("#f5b94d", ["#f5b94d", "#fb923c", "#facc15", "#f472b6"]),
-    "speaking":  ("#8b7cf8", ["#8b7cf8", "#c084fc", "#60a5fa", "#f472b6"]),
-    "idle":      ("#8b90a2", ["#6b7280", "#8b7cf8", "#38bdf8", "#6b7280"]),
-    "notice":    ("#38bdf8", ["#38bdf8", "#8b7cf8", "#2dd4bf", "#60a5fa"]),
+    # same colours as the Deo window (deo/webui/style.css)
+    "listening": ("#c6ff3d", ["#c6ff3d", "#34f5c5", "#9dff00", "#7dffb0"]),
+    "thinking":  ("#ffb020", ["#ffb020", "#ff7a1a", "#ffe14d", "#ff5fa2"]),
+    "speaking":  ("#a78bfa", ["#a78bfa", "#ff5fa2", "#38bdf8", "#c6ff3d"]),
+    "idle":      ("#c6ff3d", ["#c6ff3d", "#7dffb0", "#38bdf8", "#a78bfa"]),
+    "notice":    ("#c6ff3d", ["#c6ff3d", "#38bdf8", "#a78bfa", "#7dffb0"]),
 }
 LABELS = {"listening": "Listening…", "thinking": "Thinking…", "speaking": "", "idle": ""}
 
@@ -161,6 +162,14 @@ def _aa_mask(size, bbox, draw):
     return mask
 
 
+def _soft(mask, radius):
+    """Gaussian blur at half resolution -- glows don't need the detail, and
+    the full-size blurs were most of the frame time."""
+    w, h = mask.size
+    small = mask.resize((max(1, w // 2), max(1, h // 2)), Image.BILINEAR)
+    return small.filter(ImageFilter.GaussianBlur(radius / 2)).resize((w, h), Image.BILINEAR)
+
+
 def _aa_rrect(size, box, radius):
     def draw(d, sc, ox, oy):
         r = max(0, min(radius, (box[2] - box[0]) / 2, (box[3] - box[1]) / 2))
@@ -220,12 +229,25 @@ class Island:
               | win32con.WS_EX_TRANSPARENT | 0x08000000)          # WS_EX_NOACTIVATE
         self.hwnd = win32gui.CreateWindowEx(ex, atom, "Deo Island", win32con.WS_POPUP,
                                             self.win_x, self.win_y, self.W, self.H, 0, 0, wc.hInstance, None)
+        # Invisible to screen capture, so the glass can sample what's BEHIND it
+        # without seeing itself (Windows 10 2004+).
+        _user32.SetWindowDisplayAffinity(self.hwnd, 0x11)        # WDA_EXCLUDEFROMCAPTURE
+        self._backdrop, self._backdrop_at = None, 0.0
 
-        f = lambda name, size: ImageFont.truetype(name, int(size * self.s))
+        import os
+        inter = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui", "fonts", "Inter.ttf")
+
+        def f(size, weight):
+            font = ImageFont.truetype(inter, int(size * self.s))
+            try:
+                font.set_variation_by_axes([14, weight])         # opsz, wght
+            except Exception:
+                pass
+            return font
         try:
-            self.font_text = f("segoeui.ttf", 15)
-            self.font_label = f("seguisb.ttf", 14)
-            self.font_small = f("segoeui.ttf", 11.5)
+            self.font_text = f(15, 500)
+            self.font_label = f(14, 700)
+            self.font_small = f(11.5, 600)
         except OSError:
             self.font_text = self.font_label = self.font_small = ImageFont.load_default()
 
@@ -241,6 +263,7 @@ class Island:
         self.visible = False
         self.hide_at = None
         self.t0 = time.monotonic()
+        threading.Thread(target=self._backdrop_loop, daemon=True, name="deo-island-glass").start()
         self.ready.set()
         last = time.monotonic()
         while True:
@@ -305,6 +328,10 @@ class Island:
         import win32gui
         self.hide_at = None
         if not self.visible:
+            try:
+                self._capture_backdrop()            # fresh glass before the first frame
+            except Exception:
+                pass
             self.visible = True
             s = self.s
             self.y.value, self.w.value, self.h.value = -50 * s, 44 * s, 30 * s
@@ -368,6 +395,42 @@ class Island:
         self.y.target, self.w.target, self.h.target, self.alpha.target = TOP_MARGIN * s, w, h, 1.0
 
     # ---- rendering ------------------------------------------------------------------
+    def _glass_backdrop(self, now):
+        """What's behind the island, frosted: blurred, lightly magnified (the
+        'lens' look of liquid glass) and saturated. Captured on its own thread
+        (_backdrop_loop) -- a capture took 45ms when it grabbed the whole
+        two-monitor desktop, which alone dragged the animation to ~24fps."""
+        if self._backdrop is None:
+            return Image.new("RGBA", (self.W, self.H), (16, 17, 24, 255))
+        return self._backdrop
+
+    def _capture_backdrop(self):
+        from PIL import ImageEnhance, ImageGrab
+        W, H = self.W, self.H
+        # Only the island's own strip of the primary monitor (all_screens=False:
+        # coordinates are relative to the primary, which the island lives on).
+        shot = ImageGrab.grab(bbox=(self.win_x, self.win_y, self.win_x + W, self.win_y + H)).convert("RGB")
+        zoom = 1.08                                              # magnify toward the centre
+        cw, ch = int(W / zoom), int(H / zoom)
+        shot = shot.crop(((W - cw) // 2, 0, (W - cw) // 2 + cw, ch))
+        small = shot.resize((max(1, W // 5), max(1, H // 5)), Image.BILINEAR)
+        small = small.filter(ImageFilter.GaussianBlur(3.5))
+        small = ImageEnhance.Color(small).enhance(1.5)
+        small = ImageEnhance.Brightness(small).enhance(0.55)
+        self._backdrop = small.resize((W, H), Image.BICUBIC).convert("RGBA")
+
+    def _backdrop_loop(self):
+        _user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+        while True:
+            if self.visible:
+                try:
+                    self._capture_backdrop()
+                except Exception:
+                    pass
+                time.sleep(0.12)
+            else:
+                time.sleep(0.2)
+
     def _draw(self, now):
         s, W, H = self.s, self.W, self.H
         t = now - self.t0
@@ -386,9 +449,10 @@ class Island:
         sm = sm.filter(ImageFilter.GaussianBlur(9 * s)).resize((W, H), Image.BILINEAR)
         frame.paste((0, 0, 0, 255), (0, 0), sm)
 
-        # the glass body -- anti-aliased edge
+        # the glass body -- anti-aliased edge, frosted backdrop + dark tint
         body = _aa_rrect((W, H), box, radius)
-        frame.paste((16, 17, 24, int(232 * a)), (0, 0), body)
+        frame.paste(self._glass_backdrop(now), (0, 0), body.point(lambda v: int(v * a)))
+        frame.paste((10, 11, 15, 255), (0, 0), body.point(lambda v: int(v * 0.62 * a)))
 
         # flowing liquid rim: soft colour blobs, blurred, seen only near the edge
         core, colours = PALETTES.get(self.state, PALETTES["idle"])
@@ -415,10 +479,21 @@ class Island:
         ring = ImageChops.subtract(body, inset)                 # crisp, anti-aliased rim
         inner = _aa_rrect((W, H), (box[0] + 11 * s, box[1] + 11 * s, box[2] - 11 * s, box[3] - 11 * s),
                           max(1, radius - 11 * s))
-        glow = ImageChops.subtract(body, inner).filter(ImageFilter.GaussianBlur(6 * s))
+        glow = _soft(ImageChops.subtract(body, inner), 6 * s)
         pulse = 0.75 + 0.25 * math.sin(t * (6 if self.state == "speaking" else 2.4))
-        frame.paste(blobs, (0, 0), glow.point(lambda v: int(v * 0.32 * a * pulse)))
+        # light spilling OUTSIDE the pill -- the Siri bloom
+        halo = ImageChops.subtract(_soft(body, 13 * s), body)
+        frame.paste(blobs, (0, 0), halo.point(lambda v: int(min(255, v * 2.4) * 0.8 * a * pulse)))
+        frame.paste(blobs, (0, 0), glow.point(lambda v: int(v * 0.36 * a * pulse)))
         frame.paste(blobs, (0, 0), ring.point(lambda v: int(v * 0.95 * a)))
+        # specular: a thin bright line along the top of the glass
+        spec = ImageChops.subtract(inset, _aa_rrect((W, H), (box[0] + rim_w + 1.2 * s, box[1] + rim_w + 1.2 * s,
+                                                            box[2] - rim_w - 1.2 * s, box[3] - rim_w),
+                                                    max(1, radius - rim_w - 1.2 * s)))
+        top_fade = Image.linear_gradient("L").transpose(Image.FLIP_TOP_BOTTOM).resize((W, max(1, int(h * 0.5))))
+        fade_full = Image.new("L", (W, H), 0)
+        fade_full.paste(top_fade, (0, int(y)))
+        frame.paste((255, 255, 255, 255), (0, 0), ImageChops.multiply(spec, fade_full).point(lambda v: int(v * 0.7 * a)))
 
         # top sheen: a smooth vertical fade inside the glass, no hard edge
         grad = Image.linear_gradient("L").resize((1, 256)).transpose(Image.FLIP_TOP_BOTTOM)
