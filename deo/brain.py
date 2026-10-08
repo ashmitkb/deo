@@ -36,7 +36,9 @@ expensive than the last, until it eventually overflows the context window.
 """
 
 import json
+import os
 import re
+import time
 import uuid
 import ollama
 from . import config
@@ -274,6 +276,48 @@ class Brain:
         self.history = [{"role": "system", "content": system_content}]
         self.mcp_bridge = mcp_bridge  # optional MCPToolBridge, see mcp_client.py
         self._reasoning_format_ok = True  # cleared if a model rejects the parameter
+        self._restore_conversation()
+
+    # ---- conversation that survives restarts ----
+    # Every restart used to wipe the conversation: after one, "run the code"
+    # got "which code?" because Deo had forgotten writing it a minute earlier.
+    # Only the plain back-and-forth is kept -- tool calls and results are
+    # bulky and are only meaningful inside the turn that made them.
+
+    def _restore_conversation(self):
+        path = getattr(config, "CONVERSATION_FILE", "")
+        if not path or not os.path.exists(path):
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                saved = json.load(f)
+        except Exception as e:
+            print(f"[brain] couldn't read saved conversation: {e}")
+            return
+        max_age = getattr(config, "CONVERSATION_RESUME_HOURS", 6) * 3600
+        if time.time() - saved.get("saved_at", 0) > max_age:
+            return
+        messages = [m for m in saved.get("messages", [])
+                    if m.get("role") in ("user", "assistant") and m.get("content")]
+        if messages:
+            self.history += [{"role": m["role"], "content": m["content"]} for m in messages]
+            print(f"[brain] picked up the conversation where it left off ({len(messages)} messages)")
+
+    def _save_conversation(self):
+        path = getattr(config, "CONVERSATION_FILE", "")
+        if not path:
+            return
+        keep = getattr(config, "CONVERSATION_KEEP_MESSAGES", 12)
+        messages = [{"role": m["role"], "content": m["content"]} for m in self.history[1:]
+                    if m.get("role") in ("user", "assistant") and m.get("content")
+                    and not m.get("tool_calls")][-keep:]
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"saved_at": time.time(), "messages": messages}, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, path)
+        except Exception as e:
+            print(f"[brain] couldn't save conversation: {e}")
 
     def _tool_schemas(self) -> list:
         schemas = list(TOOL_SCHEMAS)
@@ -606,6 +650,7 @@ class Brain:
                     final_text = guard.text
         finally:
             self.history.append({"role": "assistant", "content": final_text})
+            self._save_conversation()
             self._trim_history()
 
     def _guarded_stream(self, tools, guard):
@@ -655,6 +700,7 @@ class Brain:
                 final_text = _strip_thinking(result["content"] or "")
 
         self.history.append({"role": "assistant", "content": final_text})
+        self._save_conversation()
         self._trim_history()
         return final_text
 

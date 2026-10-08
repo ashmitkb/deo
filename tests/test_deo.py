@@ -42,6 +42,10 @@ import tempfile                                                # noqa: E402
 from deo import permissions as _perm                           # noqa: E402
 _perm.ask_user = lambda tool, why, detail: False
 config.PERMISSIONS_LOG = os.path.join(tempfile.gettempdir(), "deo_test_permissions.log")
+# ...and never read or overwrite the real saved conversation.
+config.CONVERSATION_FILE = os.path.join(tempfile.gettempdir(), "deo_test_conversation.json")
+if os.path.exists(config.CONVERSATION_FILE):
+    os.remove(config.CONVERSATION_FILE)
 
 
 class _SilentStream:
@@ -519,6 +523,25 @@ def test_prompt_echo():
     check("an ordinary sentence is kept", not stt.is_prompt_echo("What is the capital of India?"))
 
 
+def test_conversation_survives_restart():
+    print("\nconversation survives a restart")
+    import json, time
+    brain, spoken, _ = fake_turn(["I wrote input_output.py for you."])
+    check("the exchange is saved after a reply", os.path.exists(config.CONVERSATION_FILE))
+    restarted = Brain()
+    contents = [m["content"] for m in restarted.history[1:]]
+    check("a new Brain picks it up", "I wrote input_output.py for you." in contents, str(contents))
+    check("tool chatter isn't saved, only the conversation",
+          all(m["role"] in ("user", "assistant") for m in restarted.history[1:]))
+    with open(config.CONVERSATION_FILE, encoding="utf-8") as f:
+        saved = json.load(f)
+    saved["saved_at"] = time.time() - 7 * 3600
+    with open(config.CONVERSATION_FILE, "w", encoding="utf-8") as f:
+        json.dump(saved, f)
+    check("a conversation older than 6 hours starts fresh", len(Brain().history) == 1)
+    os.remove(config.CONVERSATION_FILE)
+
+
 def test_everything_compiles():
     print("\nevery module compiles")
     # Most of Deo is never imported by these tests (screen_qa, gui, gesture),
@@ -626,6 +649,7 @@ def main():
                  test_history, test_tool_loop, test_command_safety,
                  test_gesture_swipe, test_echo_rejection, test_wake_debounce, test_wake_verifier,
                  test_kokoro_fallback, test_everything_compiles, test_finger_poses, test_code_never_spoken, test_barge_in, test_code_file_newlines, test_game_mode_and_barge_in_verifier, test_prompt_echo,
+                 test_conversation_survives_restart,
                  test_vad):
         try:
             test()

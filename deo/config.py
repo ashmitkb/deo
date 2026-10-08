@@ -375,6 +375,12 @@ PREWARM_TTS = True
 
 # --- Long-term memory ---
 MEMORY_FILE = _path("deo", "memory.json")
+# The last few exchanges, saved after every reply and reloaded on startup, so
+# restarting Deo doesn't wipe the conversation you were in the middle of.
+# Older than CONVERSATION_RESUME_HOURS and it starts fresh instead.
+CONVERSATION_FILE = _path("deo", "conversation.json")
+CONVERSATION_KEEP_MESSAGES = 12
+CONVERSATION_RESUME_HOURS = 6
 
 # --- Assistant identity ---
 ASSISTANT_NAME = "Deo"
