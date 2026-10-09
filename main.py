@@ -368,6 +368,9 @@ def main(start_hidden: bool = False):
         threading.Thread(target=stt.prewarm, daemon=True).start()
 
     brain = Brain(mcp_bridge=mcp_bridge)
+    # Ollama may have been quit or crashed -- start it now, not on the first question
+    from deo import ollama_up
+    threading.Thread(target=ollama_up.ensure_running, daemon=True).start()
 
     # Load the voice check now rather than on the first thing you say.
     from deo import speaker

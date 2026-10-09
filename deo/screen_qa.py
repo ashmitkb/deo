@@ -21,6 +21,7 @@ import threading
 import time
 
 import ollama
+
 import keyboard
 import mss
 from PIL import Image
@@ -57,10 +58,16 @@ def capture_screen(max_width: int = 1280) -> bytes:
         return buf.getvalue()
 
 
+def _ollama_chat(**kwargs):
+    from .ollama_up import ensure_running
+    ensure_running()
+    return ollama.chat(**kwargs)
+
+
 def ask_vision(image_png: bytes, prompt: str) -> str:
     """One question about one image, to the local vision model. qwen3.5:9b
     (Deo's normal brain) can see, so no second 6GB model has to load."""
-    response = ollama.chat(
+    response = _ollama_chat(
         model=config.SCREEN_QA_VISION_MODEL,
         messages=[{"role": "user", "content": prompt, "images": [image_png]}],
         think=False,
@@ -117,7 +124,7 @@ def describe_screen(question: str = "") -> dict:
     try:
         t0 = time.monotonic()
         image = capture_screen()   # the monitor you're working on
-        response = ollama.chat(
+        response = _ollama_chat(
             model=config.SCREEN_QA_VISION_MODEL,
             messages=[{
                 "role": "user",
@@ -181,7 +188,7 @@ class ScreenQA:
         return capture_screen()
 
     def _extract_problems(self, image_bytes: bytes) -> list[str]:
-        response = ollama.chat(
+        response = _ollama_chat(
             model=config.SCREEN_QA_VISION_MODEL,
             messages=[{
                 "role": "user",

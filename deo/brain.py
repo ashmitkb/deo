@@ -41,6 +41,8 @@ import re
 import time
 import uuid
 import ollama
+
+from .ollama_up import EnsuringClient
 from . import config
 from . import Memory
 from . import providers
@@ -284,7 +286,7 @@ class _SpeechGuard:
 
 class Brain:
     def __init__(self, mcp_bridge=None):
-        self.ollama_client = ollama.Client(host=config.OLLAMA_HOST)
+        self.ollama_client = EnsuringClient(ollama.Client(host=config.OLLAMA_HOST))  # starts Ollama if it isn't running
         system_content = config.SYSTEM_PROMPT
         memory_block = Memory.memory_as_prompt_block()
         if memory_block:

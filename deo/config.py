@@ -227,7 +227,7 @@ WAKE_REJECTS_DIR = _path("training", "data", "false_wakes")
 # 0.60 measured: your clips accepted 99.3%, other voices 10%. Raise to be
 # stricter; lower it if Deo starts ignoring you (the log shows each score).
 SPEAKER_VERIFY = True
-SPEAKER_THRESHOLD = 0.60
+SPEAKER_THRESHOLD = 0.50
 SPEAKER_MIN_SECONDS = 0.8
 SPEAKER_MODEL_PATH = _path("deo", "speaker", "wespeaker_en_voxceleb_resnet34_LM.onnx")
 SPEAKER_ENROLLMENT_PATH = _path("deo", "speaker", "enrollment.npy")

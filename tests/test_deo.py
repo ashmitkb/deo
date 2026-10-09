@@ -265,6 +265,19 @@ def test_command_safety():
     from deo.tools import TOOL_REGISTRY, TOOL_SCHEMAS
     check("power tool is registered and described",
           "power" in TOOL_REGISTRY and any(t["function"]["name"] == "power" for t in TOOL_SCHEMAS))
+    from deo import ollama_up
+    calls = []
+    real_up, real_launch = ollama_up.is_up, ollama_up._launch
+    state = {"up": False}
+    ollama_up.is_up = lambda timeout=0.3: state["up"]
+    ollama_up._launch = lambda: (calls.append(1), state.update(up=True))
+    try:
+        wrapped = ollama_up.EnsuringClient(type("C", (), {"chat": lambda self, **k: "ok"})())
+        check("a stopped Ollama gets started before the model call",
+              wrapped.chat(model="x") == "ok" and calls == [1])
+        check("a running Ollama is left alone", wrapped.chat(model="x") == "ok" and calls == [1])
+    finally:
+        ollama_up.is_up, ollama_up._launch = real_up, real_launch
     check("moving a file asks",
           perm.check("move_file", {"source": "a", "destination": "b"}, ask=says(False)) is not None)
 
