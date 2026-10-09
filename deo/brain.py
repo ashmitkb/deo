@@ -639,11 +639,13 @@ class Brain:
                 yield reply
             return
 
+        turn_start = len(self.history)
         self.history.append({"role": "user", "content": user_text})
 
         final_text = ""
         tools_called = False
         corrected = False
+        failed = False
         # finally, not except: if the stream dies or the caller stops consuming
         # part-way, the turn still has to leave history in a coherent state --
         # a user message with no assistant reply behind it would corrupt every
@@ -727,10 +729,23 @@ class Brain:
                     # rather than returning nothing at all.
                     print(f"[brain] hit the {max_rounds}-round tool limit")
                     final_text = guard.text
+        except Exception:
+            # The turn died before doing anything (Ollama down, say). Drop the
+            # request entirely: left in history unanswered, the model treated
+            # it as still pending and carried it out a turn later -- "Can you
+            # open FC27?" failed, then "volume to 30" opened F1 25 as well.
+            # (Exception, not BaseException: a barge-in closes this generator
+            # with GeneratorExit, and that turn should be kept.)
+            if not tools_called:
+                failed = True
+                del self.history[turn_start:]
+                self._save_conversation()
+            raise
         finally:
-            self.history.append({"role": "assistant", "content": final_text})
-            self._save_conversation()
-            self._trim_history()
+            if not failed:
+                self.history.append({"role": "assistant", "content": final_text})
+                self._save_conversation()
+                self._trim_history()
 
     def _guarded_stream(self, tools, guard):
         """Runs one provider call, yielding only sentences the guard has

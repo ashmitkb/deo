@@ -196,6 +196,21 @@ def test_tool_loop():
           rounds <= config.MAX_TOOL_ITERATIONS, f"{rounds} rounds")
     check("still produces a reply when the cap is hit", brain.history[-1]["role"] == "assistant")
 
+    # A turn that dies (Ollama down) must not leave its request behind --
+    # unanswered, the next turn carried it out ("volume to 30" opened F1 25).
+    brain = Brain()
+    def down(tools, progress):
+        raise ConnectionRefusedError(10061, "actively refused")
+        yield
+    brain._stream_groq = brain._stream_ollama = down
+    before = list(brain.history)
+    try:
+        list(brain.ask_streaming("Can you open FC27?"))
+    except ConnectionRefusedError:
+        pass
+    check("a failed turn leaves no unanswered request in history",
+          brain.history == before, repr(brain.history[-2:]))
+
     _, spoken, rounds = fake_turn(["Nothing to look up here."])
     check("a plain answer takes exactly one round",
           rounds == 1 and spoken == ["Nothing to look up here."], f"{spoken} / {rounds}")
