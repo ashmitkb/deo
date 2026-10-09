@@ -196,6 +196,15 @@ def classify(tool: str, args: dict):
         src, dst = args.get("source", ""), args.get("destination", "")
         return CONFIRM, "moves or renames a file", f"{src}\n  ->  {dst}"
 
+    if tool == "power":
+        action = str(args.get("action", "")).lower().replace(" ", "_")
+        ends_session = {"shutdown": "shuts down your PC", "shut_down": "shuts down your PC",
+                        "restart": "restarts your PC", "reboot": "restarts your PC",
+                        "sign_out": "signs you out of Windows", "log_off": "signs you out of Windows"}
+        if action in ends_session:
+            return CONFIRM, ends_session[action], f"{action.replace('_', ' ').upper()} this PC"
+        return ALLOW, None, action
+
     # Deo's own memory -- forgetting is deleting
     if tool == "forget_fact":
         return CONFIRM, "deletes something Deo remembers about you", str(args.get("key", ""))

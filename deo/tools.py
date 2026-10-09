@@ -10,6 +10,7 @@ Add a new tool by: (1) writing the function returning {"success", "message"},
 """
 
 import subprocess
+import threading
 import os
 import re
 import shutil
@@ -529,6 +530,43 @@ def close_app(app_name: str) -> dict:
     exes = sorted({exe for _, exe, _ in windows})
     return {"success": True,
             "message": f"Asked {len(windows)} window(s) of {', '.join(exes)} to close."}
+
+
+# Shutdown/restart wait a few seconds so Deo can finish saying it's doing it.
+# No /f: apps with unsaved work still get to ask, as with the Start menu.
+POWER_ACTIONS = {
+    "shutdown":  "shutdown /s /t 8",
+    "restart":   "shutdown /r /t 8",
+    "sign_out":  "shutdown /l",
+    "sleep":     "rundll32.exe powrprof.dll,SetSuspendState 0,1,0",
+    "lock":      "rundll32.exe user32.dll,LockWorkStation",
+    "cancel":    "shutdown /a",
+}
+
+
+def power(action: str) -> dict:
+    """Shut down, restart, sleep, lock or sign out of the PC. The permission
+    gate asks first for the ones that end your session."""
+    action = (action or "").strip().lower().replace(" ", "_").replace("-", "_")
+    action = {"shut_down": "shutdown", "reboot": "restart", "log_off": "sign_out",
+              "logoff": "sign_out", "sign_off": "sign_out", "hibernate": "sleep",
+              "abort": "cancel"}.get(action, action)
+    command = POWER_ACTIONS.get(action)
+    if not command:
+        return {"success": False, "message": f"Unknown power action '{action}'. Use one of: {', '.join(POWER_ACTIONS)}."}
+    if action == "sleep":
+        # say the reply first -- once asleep, nothing more gets said
+        threading.Timer(3, lambda: subprocess.run(command, shell=True)).start()
+        return {"success": True, "message": "Going to sleep in 3 seconds."}
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    if result.returncode != 0 and action != "cancel":
+        return {"success": False, "message": f"Windows refused: {(result.stderr or result.stdout).strip()}"}
+    done = {"shutdown": "Shutting down in 8 seconds (say 'cancel the shutdown' to stop it).",
+            "restart": "Restarting in 8 seconds (say 'cancel the restart' to stop it).",
+            "sign_out": "Signing out.", "lock": "Locked.",
+            "cancel": "Cancelled the pending shutdown/restart." if result.returncode == 0
+                      else "There was no shutdown or restart pending."}
+    return {"success": True, "message": done[action]}
 
 
 def _resolve_user_path(path: str):
@@ -1133,6 +1171,20 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "power",
+            "description": "Shut down, restart, sleep, lock or sign out of this PC, or cancel a pending shutdown/restart. Shutdown, restart and sign out show the user a confirmation popup first, so just call it when asked.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["shutdown", "restart", "sleep", "lock", "sign_out", "cancel"]}
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "close_app",
             "description": "Close (quit) an app or game that is currently running, e.g. 'brave', 'steam', 'F1 25'. Use this for any request to close, quit or exit an app -- never open_app.",
             "parameters": {
@@ -1176,6 +1228,7 @@ TOOL_REGISTRY = {
     "forget_fact": Memory.forget_fact,
     "recall_all": Memory.recall_all,
     "close_app": close_app,
+    "power": power,
     "look_at_screen": look_at_screen,
     "look_at_region": look_at_region,
     "solve_screen_question": solve_screen_question,

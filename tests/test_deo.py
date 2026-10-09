@@ -258,6 +258,13 @@ def test_command_safety():
     from deo.tools import delete_file
     check("delete_file refuses anything outside the user folder",
           not delete_file("C:/Windows/win.ini")["success"])
+    check("shutting down asks; locking doesn't",
+          perm.check("power", {"action": "shutdown"}, ask=says(False)) is not None
+          and perm.check("power", {"action": "restart"}, ask=says(False)) is not None
+          and perm.check("power", {"action": "lock"}, ask=says(False)) is None)
+    from deo.tools import TOOL_REGISTRY, TOOL_SCHEMAS
+    check("power tool is registered and described",
+          "power" in TOOL_REGISTRY and any(t["function"]["name"] == "power" for t in TOOL_SCHEMAS))
     check("moving a file asks",
           perm.check("move_file", {"source": "a", "destination": "b"}, ask=says(False)) is not None)
 
