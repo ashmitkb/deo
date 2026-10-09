@@ -295,6 +295,12 @@ def test_command_safety():
               up_ok and fake.level == 0 and "set_volume" in _t.TOOL_REGISTRY)
     finally:
         _t._speakers = real
+    from deo.brain import refuses_capability
+    check("a capability refusal is spotted; normal answers aren't",
+          refuses_capability("I don't have the capability to control system volume or adjust audio settings directly.")
+          and refuses_capability("I can't shut down your computer.")
+          and not refuses_capability("Volume 58% -> 30%.")
+          and not refuses_capability("I can't wait to see it -- that sounds fun."))
     check("moving a file asks",
           perm.check("move_file", {"source": "a", "destination": "b"}, ask=says(False)) is not None)
 

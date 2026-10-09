@@ -193,6 +193,21 @@ _ACTION_CLAIM = re.compile(
     re.IGNORECASE)
 
 
+_CANT_DO = re.compile(
+    r"\bi\s*(?:'m|am)?\s*(?:don['’]?t|do not|can['’]?t|cannot|unable to|not able to)\s+"
+    r"(?:have\s+(?:the\s+)?(?:ability|capability|access|permission)\s+to\s+)?(?:directly\s+)?"
+    r"(?:control|change|adjust|access|do|perform|open|close|set|turn|shut|restart|manage|modify)\w*"
+    r"|\bdon['’]?t have (?:the )?(?:ability|capability|access|a tool)\b",
+    re.IGNORECASE)
+
+
+def refuses_capability(text: str) -> bool:
+    """Does a reply say Deo can't do something? The 9B model sometimes says
+    so without even trying a tool -- or copies an old refusal from the
+    conversation after the tool was added ("reduce the volume to 30")."""
+    return bool(text) and bool(_CANT_DO.search(text))
+
+
 def claims_action(text: str) -> bool:
     """Does a reply say Deo did (or is doing) something? Used to catch the
     model narrating an action it never actually took."""
@@ -668,6 +683,19 @@ class Brain:
                             "Call the right tool now. Afterwards reply with at most five words, like "
                             "'Done.' -- no apology, no explanation. If it can't be done, say so in one "
                             "short sentence.]")})
+                        continue
+                    # Said it can't, without trying a tool: once, make it look.
+                    if (not tools_called and not corrected and not last_round
+                            and len(guard.text) < 400 and refuses_capability(guard.text)):
+                        corrected = True
+                        print(f"[brain] refused without trying a tool, retrying: {guard.text[:80]!r}")
+                        self.history.append({"role": "assistant", "content": guard.text})
+                        self.history.append({"role": "user", "content": (
+                            "[Automatic check -- the user can't see this, so never mention it: you said "
+                            "you can't do that, but you have tools for a lot (volume, power, apps, "
+                            "windows, files, commands, web). Check your tool list: if a tool fits, call it "
+                            "now and then reply with at most five words. Only if nothing fits, say so in "
+                            "one short sentence.]")})
                         continue
                     # The model stopped reaching for tools, so this is the answer.
                     final_text = guard.text
