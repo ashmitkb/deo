@@ -558,14 +558,20 @@ class Island:
         box = (x0, y, x0 + w, y + h)
         frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
-        # soft floating shadow
+        # floating shadow -- no bezel on the glass; the shadow alone lifts it off
+        # the screen: a wide, soft one well below it, plus a tighter one closer in
         sw, sh = W // 2, H // 2
-        sm = Image.new("L", (sw, sh), 0)
-        ImageDraw.Draw(sm).rounded_rectangle(
-            [c / 2 for c in (box[0] + 6 * s, box[1] + 10 * s, box[2] - 6 * s, box[3] + 10 * s)],
-            radius / 2, fill=int(110 * a))
-        frame.paste((0, 0, 0, 255), (0, 0),
-                    sm.filter(ImageFilter.GaussianBlur(10 * s)).resize((W, H), Image.BILINEAR))
+        far = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(far).rounded_rectangle(
+            [c / 2 for c in (box[0] + 2 * s, box[1] + 18 * s, box[2] - 2 * s, box[3] + 18 * s)],
+            radius / 2, fill=int(150 * a))
+        near = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(near).rounded_rectangle(
+            [c / 2 for c in (box[0] + 8 * s, box[1] + 6 * s, box[2] - 8 * s, box[3] + 6 * s)],
+            radius / 2, fill=int(90 * a))
+        shadow = ImageChops.lighter(far.filter(ImageFilter.GaussianBlur(11 * s)),
+                                    near.filter(ImageFilter.GaussianBlur(4 * s)))
+        frame.paste((0, 0, 0, 255), (0, 0), shadow.resize((W, H), Image.BILINEAR))
 
         body, inset1 = self._liquid_masks(box, radius, pull, now)
         bb = body.getbbox() or (0, 0, 1, 1)
@@ -598,14 +604,8 @@ class Island:
             glass.paste(Image.fromarray(out.clip(0, 255).astype(np.uint8), "RGB"), (rx1, ry1))
             frame.paste(glass, (0, 0), body.point(lambda v: int(v * a)))
 
-        # specular light: bright rim at the top fading down the sides
-        rim = ImageChops.subtract(body, inset1)
-        vert = Image.linear_gradient("L").resize((1, 256))                       # 0 top -> 255 bottom
-        vert = vert.point(lambda v: int(255 - v * 0.62)).resize((W, max(1, int(h))))
-        light = Image.new("L", (W, H), 0)
-        light.paste(vert, (0, int(y)))
-        frame.paste((255, 255, 255, 255), (0, 0),
-                    ImageChops.multiply(rim, light).point(lambda v: int(v * 0.85 * a)))
+        # (no bright rim or bottom reflection line: the edge stays clear, and
+        #  the floating shadow above does the work)
         # soft sheen across the top of the glass
         inner = _aa_rrect((W, H), (box[0] + 3 * s, box[1] + 3 * s, box[2] - 3 * s, box[3] - 3 * s),
                           max(1, radius - 3 * s))
@@ -613,9 +613,6 @@ class Island:
         sheen = Image.new("L", (W, H), 0)
         sheen.paste(top.point(lambda v: int(v * v / 255 * 0.16)), (0, int(y)))
         frame.paste((255, 255, 255, 255), (0, 0), ImageChops.multiply(sheen, inner).point(lambda v: int(v * a)))
-        # faint reflection along the inside of the bottom edge
-        bot = _aa_rrect((W, H), (box[0] + radius * 0.6, box[3] - 3.2 * s, box[2] - radius * 0.6, box[3] - 2.2 * s), 1 * s)
-        frame.paste((255, 255, 255, 255), (0, 0), bot.point(lambda v: int(v * 0.22 * a)))
 
         # content: a white glyph for the state, then white text
         if w > 120 * s and h > 40 * s and a > 0.3:
