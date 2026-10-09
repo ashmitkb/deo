@@ -278,6 +278,23 @@ def test_command_safety():
         check("a running Ollama is left alone", wrapped.chat(model="x") == "ok" and calls == [1])
     finally:
         ollama_up.is_up, ollama_up._launch = real_up, real_launch
+    from deo import tools as _t
+    class _FakeVol:
+        level, muted = 0.5, 1
+        def GetMasterVolumeLevelScalar(self): return self.level
+        def SetMasterVolumeLevelScalar(self, v, ctx): self.level = v
+        def GetMute(self): return self.muted
+        def SetMute(self, m, ctx): self.muted = m
+    fake, real = _FakeVol(), _t._speakers
+    _t._speakers = lambda: fake
+    try:
+        _t.set_volume("up", 20)
+        up_ok = round(fake.level * 100) == 70 and fake.muted == 0
+        _t.set_volume("down", 200)
+        check("volume up unmutes, and levels stay within 0-100",
+              up_ok and fake.level == 0 and "set_volume" in _t.TOOL_REGISTRY)
+    finally:
+        _t._speakers = real
     check("moving a file asks",
           perm.check("move_file", {"source": "a", "destination": "b"}, ask=says(False)) is not None)
 

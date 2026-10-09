@@ -569,6 +569,48 @@ def power(action: str) -> dict:
     return {"success": True, "message": done[action]}
 
 
+def _speakers():
+    """The default output device's volume control (Windows Core Audio)."""
+    import comtypes
+    try:
+        comtypes.CoInitialize()       # tools run on worker threads; COM is per-thread
+    except OSError:
+        pass
+    from pycaw.pycaw import AudioUtilities
+    return AudioUtilities.GetSpeakers().EndpointVolume
+
+
+def set_volume(action: str, amount: int = 10) -> dict:
+    """System volume: up/down by `amount` percent, set to `amount` percent,
+    mute, unmute, or get the current level."""
+    action = (action or "").strip().lower()
+    action = {"increase": "up", "raise": "up", "louder": "up", "decrease": "down",
+              "lower": "down", "quieter": "down", "reduce": "down", "level": "set",
+              "check": "get", "status": "get"}.get(action, action)
+    try:
+        vol = _speakers()
+        now = round(vol.GetMasterVolumeLevelScalar() * 100)
+        try:
+            amount = int(float(amount))
+        except (TypeError, ValueError):
+            amount = 10
+        if action in ("up", "down", "set"):
+            target = {"up": now + amount, "down": now - amount, "set": amount}[action]
+            target = max(0, min(100, target))
+            vol.SetMasterVolumeLevelScalar(target / 100, None)
+            if target > 0:
+                vol.SetMute(0, None)      # "turn it up" while muted should be heard
+            return {"success": True, "message": f"Volume {now}% -> {target}%."}
+        if action in ("mute", "unmute"):
+            vol.SetMute(1 if action == "mute" else 0, None)
+            return {"success": True, "message": f"{'Muted' if action == 'mute' else 'Unmuted'} (volume {now}%)."}
+        if action == "get":
+            return {"success": True, "message": f"Volume is {now}%{' (muted)' if vol.GetMute() else ''}."}
+        return {"success": False, "message": f"Unknown volume action '{action}'. Use up, down, set, mute, unmute or get."}
+    except Exception as e:
+        return {"success": False, "message": f"Couldn't change the volume: {e}"}
+
+
 def _resolve_user_path(path: str):
     """A spoken file reference -> an existing absolute path, or None. Bare
     names ("test.txt") are looked for in the folders people actually mean:
@@ -1171,6 +1213,21 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "set_volume",
+            "description": "Change the PC's system volume: turn it up/down (by amount percent, default 10), set it to an exact percent, mute, unmute, or get the current level. Use for any request about volume, louder, quieter, or mute.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["up", "down", "set", "mute", "unmute", "get"]},
+                    "amount": {"type": "integer", "description": "Percent to change by (up/down) or the level to set (set), 0-100"}
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "power",
             "description": "Shut down, restart, sleep, lock or sign out of this PC, or cancel a pending shutdown/restart. Shutdown, restart and sign out show the user a confirmation popup first, so just call it when asked.",
             "parameters": {
@@ -1229,6 +1286,7 @@ TOOL_REGISTRY = {
     "recall_all": Memory.recall_all,
     "close_app": close_app,
     "power": power,
+    "set_volume": set_volume,
     "look_at_screen": look_at_screen,
     "look_at_region": look_at_region,
     "solve_screen_question": solve_screen_question,

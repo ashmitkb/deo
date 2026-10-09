@@ -32,3 +32,4 @@ opencv-python
 
 # NOT pip-installable: Piper TTS is a standalone binary + voice model.
 # See README for the download/placement steps.
+pycaw                 # system volume control (set_volume tool)
