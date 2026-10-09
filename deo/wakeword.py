@@ -36,6 +36,16 @@ from . import config, stt
 FRAME_SAMPLES = 1280  # openWakeWord expects 80ms chunks at 16kHz
 
 
+def _refresh_audio_devices():
+    """Make PortAudio rescan devices (after sleep, or a headset plugged in).
+    Only touches the library state -- other streams just reopen as usual."""
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception as e:
+        print(f"[wakeword] couldn't refresh audio devices: {e}")
+
+
 class FrameGate:
     """Rising-edge detector that requires N consecutive frames over threshold.
 
@@ -118,11 +128,33 @@ class WakeWordListener:
     def _run(self):
         print(f"[wakeword] listening for: {list(self._model.models.keys())}"
               + (" (Whisper-verified)" if self._verify else ""))
+        # Standby has to survive the laptop sleeping. Waking can reset the
+        # audio device under an open stream; before, that error ended this
+        # thread silently and "hey Deo" was dead until Deo was restarted.
+        while not self._stop.is_set():
+            try:
+                self._listen_once()
+            except Exception as e:
+                print(f"[wakeword] microphone stream stopped ({e}) -- reopening in 2s")
+                time.sleep(2)
+                _refresh_audio_devices()
+
+    def _listen_once(self):
         with sd.InputStream(
             samplerate=16000, channels=1, dtype="int16", blocksize=FRAME_SAMPLES
         ) as stream:
+            last = time.monotonic()
             while not self._stop.is_set():
                 frame, _ = stream.read(FRAME_SAMPLES)
+                now = time.monotonic()
+                if now - last > 10:
+                    # A read that took >10s means the machine was asleep. The
+                    # stream may now be on a stale device: start fresh.
+                    print(f"[wakeword] back from sleep ({now - last:.0f}s gap) -- reopening the microphone")
+                    self._model.reset()
+                    _refresh_audio_devices()
+                    return
+                last = now
                 frame = frame.flatten()
                 self._recent.append(frame)
                 predictions = self._model.predict(frame)

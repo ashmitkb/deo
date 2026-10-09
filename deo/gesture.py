@@ -205,11 +205,21 @@ class GestureListener:
             cap.release()
         return None
 
-    def _run(self):
+    def _wait_for_camera(self):
+        """Open the camera, retrying every few seconds instead of giving up --
+        after the laptop sleeps (or another app had it) it comes back on its
+        own. Returns None only when the listener is being stopped."""
         cap = self._open_camera()
         if cap is None:
-            print(f"[gesture] couldn't open camera index {config.GESTURE_CAMERA_INDEX} "
-                  f"-- is another app using it, or is GESTURE_CAMERA_INDEX wrong?")
+            print(f"[gesture] camera {config.GESTURE_CAMERA_INDEX} unavailable "
+                  f"(asleep, or another app has it) -- retrying every 5s")
+        while cap is None and not self._stop.wait(5):
+            cap = self._open_camera()
+        return cap
+
+    def _run(self):
+        cap = self._wait_for_camera()
+        if cap is None:
             return
         if self._mode == "fingers":
             print("[gesture] watching for fingers: 1 = right screen, 2 = left screen")
@@ -231,8 +241,14 @@ class GestureListener:
                     if read_failures == 1 or read_failures % 100 == 0:
                         print(f"[gesture] camera read failed ({read_failures}x)")
                     if read_failures > 300:
-                        print("[gesture] camera stopped delivering frames, giving up")
-                        return
+                        # Typically the laptop slept. Used to give up for good.
+                        print("[gesture] camera stopped delivering frames -- reopening it")
+                        cap.release()
+                        cap = self._wait_for_camera()
+                        if cap is None:
+                            return
+                        read_failures = 0
+                        continue
                     time.sleep(0.05)
                     continue
                 read_failures = 0
