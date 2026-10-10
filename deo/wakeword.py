@@ -132,30 +132,39 @@ class WakeWordListener:
         # Standby has to survive the laptop sleeping. Waking can reset the
         # audio device under an open stream; before, that error ended this
         # thread silently and "hey Deo" was dead until Deo was restarted.
+        failures = 0
         while not self._stop.is_set():
             try:
                 self._listen_once()
+                failures = 0
             except Exception as e:
+                failures += 1
                 print(f"[wakeword] microphone stream stopped ({e}) -- reopening in 2s")
                 time.sleep(2)
-                _refresh_audio_devices()
+                # Rescanning devices restarts PortAudio, which kills EVERY open
+                # stream -- a conversation's recording, Deo's voice. Only when
+                # plainly reopening has already failed.
+                if failures >= 2:
+                    _refresh_audio_devices()
 
     def _listen_once(self):
         with sd.InputStream(
             samplerate=16000, channels=1, dtype="int16", blocksize=FRAME_SAMPLES
         ) as stream:
-            last = time.monotonic()
             while not self._stop.is_set():
+                # Time ONE read, not the gap since the last: verifying a wake or
+                # handing off a conversation also leaves a gap, and treating an
+                # 80s Whisper load as "slept" reset the audio under the next
+                # conversation's recording ("Error querying device -1").
+                before = time.monotonic()
                 frame, _ = stream.read(FRAME_SAMPLES)
-                now = time.monotonic()
-                if now - last > 10:
-                    # A read that took >10s means the machine was asleep. The
-                    # stream may now be on a stale device: start fresh.
-                    print(f"[wakeword] back from sleep ({now - last:.0f}s gap) -- reopening the microphone")
+                took = time.monotonic() - before
+                if took > 10:
+                    # An 80ms read that took >10s: the machine was asleep, and
+                    # the stream may be on a stale device. Reopen it.
+                    print(f"[wakeword] back from sleep ({took:.0f}s read) -- reopening the microphone")
                     self._model.reset()
-                    _refresh_audio_devices()
                     return
-                last = now
                 frame = frame.flatten()
                 self._recent.append(frame)
                 predictions = self._model.predict(frame)
