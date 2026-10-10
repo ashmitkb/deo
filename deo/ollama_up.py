@@ -34,16 +34,15 @@ def is_up(timeout: float = 0.3) -> bool:
 
 
 def _launch():
+    # Just the server, hidden. Not "ollama app.exe": that's the desktop app,
+    # and it opens its window on screen -- not what you want popping up when
+    # Deo quietly restarts Ollama after a crash or a driver update.
     base = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama")
-    tray_app = os.path.join(base, "ollama app.exe")
-    if os.path.isfile(tray_app):
-        # The tray app is what the Startup shortcut runs: it starts the server
-        # and puts the icon back, exactly as if Ollama had started normally.
-        subprocess.Popen([tray_app], cwd=base, close_fds=True)
-        return
     exe = os.path.join(base, "ollama.exe")
     subprocess.Popen([exe if os.path.isfile(exe) else "ollama", "serve"],
-                     creationflags=subprocess.CREATE_NO_WINDOW, close_fds=True)
+                     creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     close_fds=True)
 
 
 def ensure_running(wait_s: float = 30.0) -> bool:
