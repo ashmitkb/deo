@@ -135,6 +135,36 @@ def _get_model():
     return _model
 
 
+def is_ready() -> bool:
+    """Is Whisper loaded? Right after the laptop wakes it can take a minute
+    or two (the GPU driver is still recovering), and the wake word needs it."""
+    return _model is not None
+
+
+def _looks_like_gpu_failure(e: Exception) -> bool:
+    text = str(e).lower()
+    return any(k in text for k in ("cuda", "cublas", "cudnn", "device-side", "gpu"))
+
+
+def _with_gpu_recovery(run):
+    """run(model) -> result, reloading Whisper once if the GPU fell over.
+
+    A graphics driver reset (Windows logs it as LiveKernelEvent 141 -- seen
+    here on waking from hibernate) leaves the loaded model pointing at a dead
+    CUDA context: every call after that fails until Deo restarts. Reloading
+    picks up the recovered GPU, or falls back to the CPU if it hasn't."""
+    global _model
+    try:
+        return run(_get_model())
+    except Exception as e:
+        if not _looks_like_gpu_failure(e):
+            raise
+        print(f"[stt] Whisper hit a GPU error ({e}) -- reloading it")
+        with _model_lock:
+            _model = None
+        return run(_get_model())
+
+
 def prewarm():
     """Load (and on GPU, JIT-compile) Whisper ahead of the first utterance.
     Safe to call from a background thread; never raises."""
@@ -156,20 +186,22 @@ def _transcribe_plain(audio: np.ndarray) -> str:
     closest ("Hey, dear", "Hey, Leo", "Radio"). Primed, it spells it "Deo"
     when the sound is there, and still writes "Can you open Brave?" when it
     isn't -- it didn't put "Deo" into a single negative."""
-    model = _get_model()
     peak = float(np.abs(audio).max()) if audio.size else 0.0
     if peak < 1e-4:
         return ""
-    with _model_lock:
-        segments, _ = model.transcribe(
-            audio * (0.5 / peak),   # the mic is quiet; Whisper does better near -6 dBFS
-            language="en",
-            beam_size=1,
-            without_timestamps=True,
-            condition_on_previous_text=False,
-            initial_prompt="Hey Deo.",
-        )
-        return " ".join(seg.text.strip() for seg in segments).strip()
+
+    def run(model):
+        with _model_lock:
+            segments, _ = model.transcribe(
+                audio * (0.5 / peak),   # the mic is quiet; Whisper does better near -6 dBFS
+                language="en",
+                beam_size=1,
+                without_timestamps=True,
+                condition_on_previous_text=False,
+                initial_prompt="Hey Deo.",
+            )
+            return " ".join(seg.text.strip() for seg in segments).strip()
+    return _with_gpu_recovery(run)
 
 
 # "hey deo" as Whisper actually writes it. Built from config.WAKE_WORD_VARIANTS
@@ -372,7 +404,10 @@ def _transcribe_groq(audio: np.ndarray) -> str:
 
 
 def _transcribe_local(audio: np.ndarray) -> str:
-    model = _get_model()
+    return _with_gpu_recovery(lambda model: _decode_command(model, audio))
+
+
+def _decode_command(model, audio: np.ndarray) -> str:
     # segments is a lazy generator: decoding happens in the join, so both
     # stay inside the lock (see _model_lock).
     with _model_lock:

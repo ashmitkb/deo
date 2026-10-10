@@ -196,6 +196,27 @@ def test_tool_loop():
           rounds <= config.MAX_TOOL_ITERATIONS, f"{rounds} rounds")
     check("still produces a reply when the cap is hit", brain.history[-1]["role"] == "assistant")
 
+    # A GPU driver reset (seen on waking from hibernate) kills the loaded
+    # Whisper's CUDA context; the next call must reload it, not fail forever.
+    from deo import stt
+    loads, real_get = [], stt._get_model
+    class _Dead:
+        def transcribe(self, *a, **k): raise RuntimeError("CUDA failed with error unspecified launch failure")
+    class _Alive:
+        def transcribe(self, *a, **k): return iter([type("S", (), {"text": "open brave"})()]), None
+    def fake_get():
+        if stt._model is None:
+            loads.append(1)
+            stt._model = _Alive()
+        return stt._model
+    saved = stt._model
+    stt._model, stt._get_model = _Dead(), fake_get
+    try:
+        text = stt._transcribe_local(np.zeros(16000, np.float32))
+        check("Whisper reloads itself after a GPU error", text == "open brave" and loads == [1], repr(text))
+    finally:
+        stt._model, stt._get_model = saved, real_get
+
     # A turn that dies (Ollama down) must not leave its request behind --
     # unanswered, the next turn carried it out ("volume to 30" opened F1 25).
     brain = Brain()

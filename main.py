@@ -477,6 +477,7 @@ def main(start_hidden: bool = False):
         wake_listener = WakeWordListener(on_wake=lambda: handle_wake(brain, gui))
         wake_listener.playback_text = lambda: (
             " ".join(_current_reply) if _phase in ("speaking", "thinking") else "")
+        wake_listener.on_status = lambda text: gui.push_system_message(text, island=True)
         wake_listener.start_in_background()
     except Exception as e:
         print(f"[wakeword] failed to start, falling back to push-to-talk only: {e}")

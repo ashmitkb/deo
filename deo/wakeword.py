@@ -121,6 +121,7 @@ class WakeWordListener:
         # Set by main.py: returns what Deo is saying right now, or "" when it
         # isn't speaking. Used by _confirm() during barge-in.
         self.playback_text = lambda: ""
+        self.on_status = lambda text: None   # set by main.py: shows a line on the island
         self._pb = None   # barge-in diagnostics, see _track_playback
         keep = int(getattr(config, "WAKE_VERIFY_SECONDS", 2.0) * 16000 / FRAME_SAMPLES)
         self._recent = collections.deque(maxlen=max(1, keep))
@@ -221,6 +222,14 @@ class WakeWordListener:
             self._recent.append(frame.flatten())
 
         audio = np.concatenate(list(self._recent)).astype(np.float32) / 32768.0
+        if not stt.is_ready():
+            # Just after the laptop wakes, Whisper can take a minute or two to
+            # load. Silence for that long looks exactly like Deo being dead.
+            print("[wakeword] heard the wake word, but Whisper is still loading -- waiting")
+            try:
+                self.on_status("Waking up, one sec…")
+            except Exception:
+                pass
         t0 = time.monotonic()
         accepted, text = stt.verify_wake(audio)
         took = time.monotonic() - t0
