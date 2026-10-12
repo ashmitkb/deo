@@ -240,6 +240,12 @@ def refuses_capability(text: str) -> bool:
     return bool(text) and bool(_CANT_DO.search(text))
 
 
+_INSTANT_OPEN_RE = re.compile(
+    r"^(?:hey,? deo[,.!]?\s*)?(?:(?:can|could|would|will) you\s+)?(?:please\s+)?"
+    r"(?:open|launch)(?:\s+up)?\s+(?:the\s+)?(.+?)(?:\s+app)?(?:\s+for me)?(?:,?\s+please)?[.?!]*$",
+    re.IGNORECASE)
+
+
 def claims_action(text: str) -> bool:
     """Does a reply say Deo did (or is doing) something? Used to catch the
     model narrating an action it never actually took."""
@@ -603,7 +609,16 @@ class Brain:
 
         content = []
         tool_calls = []
+        t0 = time.monotonic()
         for chunk in self.ollama_client.chat(**kwargs):
+            if chunk.get("done"):
+                # Where a slow reply's time went: re-reading the prompt (cache
+                # miss, or part of the model on the CPU) vs generating, vs
+                # loading the model (load_duration).
+                ns = lambda k: (chunk.get(k) or 0) / 1e9
+                print(f"[timing] {kwargs['model']}: {time.monotonic() - t0:.1f}s -- load {ns('load_duration'):.1f}s, "
+                      f"prompt {chunk.get('prompt_eval_count') or 0} tok in {ns('prompt_eval_duration'):.1f}s, "
+                      f"reply {chunk.get('eval_count') or 0} tok in {ns('eval_duration'):.1f}s")
             message = chunk["message"]
             text = message.get("content")
             if text:
@@ -669,6 +684,11 @@ class Brain:
             reply = self.ask(user_text)
             if reply:
                 yield reply
+            return
+
+        instant = self._instant_open(user_text)
+        if instant:
+            yield instant
             return
 
         turn_start = len(self.history)
@@ -778,6 +798,55 @@ class Brain:
                 self.history.append({"role": "assistant", "content": final_text})
                 self._save_conversation()
                 self._trim_history()
+
+    def warm_up(self):
+        """Have Ollama read Deo's instructions and tools once, in the
+        background at startup. They're ~4,300 tokens; Ollama keeps what it has
+        read, so the first real request only reads what's new. Measured: the
+        first "open Claude" after a restart took 8.7s cold, 3.6s warm."""
+        try:
+            if self.mcp_bridge and hasattr(self.mcp_bridge, "_ready"):
+                self.mcp_bridge._ready.wait(30)    # same tool list a real turn sends
+            t0 = time.monotonic()
+            self.ollama_client.chat(
+                model=gamemode.current_model(),
+                messages=_to_ollama_messages(self.history[:1]) + [{"role": "user", "content": "hi"}],
+                tools=self._tool_schemas(),
+                keep_alive=config.OLLAMA_KEEP_ALIVE,
+                options={"num_ctx": config.OLLAMA_NUM_CTX, "num_predict": 1},
+                think=False,
+            )
+            print(f"[brain] warmed up {gamemode.current_model()} in {time.monotonic() - t0:.1f}s")
+        except Exception as e:
+            print(f"[brain] warm-up skipped: {e}")
+
+    def _instant_open(self, user_text: str):
+        """ "open Claude" / "can you open Brave?" without the model: ~3.5s of
+        two model rounds (decide to call open_app, then say so) for something
+        a regex and an exact app-name match settle at once. Only an EXACT
+        installed name qualifies; anything else ("open Brave and search for
+        cats", a mis-heard name) returns None and goes to the model as usual.
+        Same tool call, permission gate and history as the slow path."""
+        if not getattr(config, "INSTANT_OPEN", True):
+            return None
+        m = _INSTANT_OPEN_RE.match(user_text.strip())
+        if not m:
+            return None
+        from .tools import exact_app_name
+        name = m.group(1).strip()
+        display = exact_app_name(name)
+        if not display:
+            return None
+        result = self._run_tool("open_app", {"app_name": name})
+        print(f"[brain] instant open: {name!r} -> {result.get('message')}")
+        if not result.get("success"):
+            return None          # let the model deal with it (and explain)
+        reply = f"Opening {display}."
+        self.history.append({"role": "user", "content": user_text})
+        self.history.append({"role": "assistant", "content": reply})
+        self._save_conversation()
+        self._trim_history()
+        return reply
 
     def _guarded_stream(self, tools, guard):
         """Runs one provider call, yielding only sentences the guard has

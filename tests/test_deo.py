@@ -197,6 +197,28 @@ def test_tool_loop():
           rounds <= config.MAX_TOOL_ITERATIONS, f"{rounds} rounds")
     check("still produces a reply when the cap is hit", brain.history[-1]["role"] == "assistant")
 
+    # "open Claude" skips the model when the name is an exact installed app.
+    from deo import tools as _tools
+    real_exact = _tools.exact_app_name
+    _tools.exact_app_name = lambda n: {"claude": "Claude", "brave": "Brave"}.get(n.strip().lower())
+    try:
+        b = Brain()
+        ran = []
+        b._run_tool = lambda name, args: (ran.append((name, args["app_name"])), {"success": True, "message": "ok"})[1]
+        b._stream_groq = b._stream_ollama = lambda tools, progress: (_ for _ in ()).throw(AssertionError("model was called"))
+        said = list(b.ask_streaming("Can you open Claude?"))
+        check("'can you open Claude?' opens it without the model",
+              said == ["Opening Claude."] and ran == [("open_app", "Claude")]
+              and b.history[-1]["content"] == "Opening Claude.", repr((said, ran)))
+        from deo.brain import _INSTANT_OPEN_RE
+        check("only plain 'open X' requests take the instant path",
+              all(_INSTANT_OPEN_RE.match(t) for t in ("open brave", "Hey Deo, open Claude please.", "could you launch the steam app"))
+              and b._instant_open("open brave and search for cats") is None
+              and b._instant_open("open the file test.py") is None
+              and b._instant_open("what's the weather") is None)
+    finally:
+        _tools.exact_app_name = real_exact
+
     # The context is 8K now, so history is trimmed by SIZE before each call.
     from deo.brain import fit_to_context
     big = "x" * 6000

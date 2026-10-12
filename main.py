@@ -129,8 +129,13 @@ def _listen_and_answer(brain: Brain, gui: DeoGUI, start_timeout: float = None,
     own voice coming back through the microphone.
     """
     _status(gui, "listening")
+    t0 = time.monotonic()
     audio = record_until_silence(start_timeout=start_timeout)
+    t1 = time.monotonic()
     user_text = transcribe(audio)
+    if user_text:
+        print(f"[timing] listened {t1 - t0:.1f}s ({audio.size / 16000:.1f}s of audio), "
+              f"transcribed in {time.monotonic() - t1:.1f}s")
     if not user_text:
         return None
 
@@ -370,7 +375,7 @@ def main(start_hidden: bool = False):
     brain = Brain(mcp_bridge=mcp_bridge)
     # Ollama may have been quit or crashed -- start it now, not on the first question
     from deo import ollama_up
-    threading.Thread(target=ollama_up.ensure_running, daemon=True).start()
+    threading.Thread(target=lambda: (ollama_up.ensure_running(), brain.warm_up()), daemon=True).start()
 
     # Load the voice check now rather than on the first thing you say.
     from deo import speaker

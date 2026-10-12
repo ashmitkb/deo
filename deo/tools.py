@@ -216,6 +216,20 @@ def _find_installed_app(app_name: str):
     return None
 
 
+def exact_app_name(app_name: str):
+    """Display name if app_name names an app EXACTLY (no fuzzy matching), else
+    None. Used by Brain's instant "open X" path -- there, a confident miss is
+    worse than a few seconds of the model thinking it over."""
+    global _installed_apps
+    raw = app_name.strip().lower()
+    if raw in config.APP_PROTOCOL_REGISTRY or raw in config.APP_PATH_REGISTRY:
+        return raw.title() if raw.islower() else raw
+    if _installed_apps is None:
+        _installed_apps = _discover_installed_apps()
+    key = _app_key(app_name)
+    return _installed_apps[key][0] if key and key in _installed_apps else None
+
+
 def open_app(app_name: str) -> dict:
     """Open an application, trying a protocol handler, then a known path, then
     installed games and shortcuts, then PATH lookup."""
