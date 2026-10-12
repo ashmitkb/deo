@@ -119,6 +119,38 @@ def _to_openai_messages(history: list) -> list:
     return out
 
 
+_CHARS_PER_TOKEN = 3.2   # measured 3.77 on Deo's prompt; lower = safer for dense JSON
+
+
+def fit_to_context(messages: list, tools, num_ctx: int, reserve: int = 1200) -> list:
+    """Drop the oldest exchanges until the request fits in num_ctx tokens.
+
+    MAX_HISTORY_MESSAGES caps the COUNT of messages, but one folder listing is
+    ~1,700 tokens, so a few big tool results could still overflow the window
+    and kill the turn. This trims by size, right before each call. The system
+    prompt and the current request (the last user message onward) always stay.
+    `reserve` leaves room for the reply."""
+    est = lambda obj: len(json.dumps(obj, ensure_ascii=False, default=str)) / _CHARS_PER_TOKEN
+    budget = num_ctx - reserve - est(tools or [])
+    if not messages or est(messages) <= budget:
+        return messages
+    system, rest = messages[:1], list(messages[1:])
+    current = max((i for i, m in enumerate(rest) if m.get("role") == "user"), default=0)
+    dropped = 0
+    while current > 0 and est(system + rest) > budget:
+        rest.pop(0)
+        current -= 1
+        dropped += 1
+        # never start on a tool result whose call was just dropped
+        while current > 0 and rest and rest[0].get("role") == "tool":
+            rest.pop(0)
+            current -= 1
+            dropped += 1
+    if dropped:
+        print(f"[brain] trimmed {dropped} old message(s) to fit the {num_ctx}-token context")
+    return system + rest
+
+
 def _to_ollama_messages(history: list) -> list:
     """Ollama's tool-calling is looser: no id/type wrapper needed, arguments
     stay as a native dict, and tool results don't need a tool_call_id."""
@@ -489,7 +521,7 @@ class Brain:
     def _call_ollama(self, tools) -> dict:
         kwargs = dict(
             model=gamemode.current_model(),
-            messages=_to_ollama_messages(self.history),
+            messages=fit_to_context(_to_ollama_messages(self.history), tools, config.OLLAMA_NUM_CTX),
             keep_alive=config.OLLAMA_KEEP_ALIVE,
             options={"num_ctx": config.OLLAMA_NUM_CTX},
             think=False,
@@ -560,7 +592,7 @@ class Brain:
     def _stream_ollama(self, tools, progress):
         kwargs = dict(
             model=gamemode.current_model(),
-            messages=_to_ollama_messages(self.history),
+            messages=fit_to_context(_to_ollama_messages(self.history), tools, config.OLLAMA_NUM_CTX),
             keep_alive=config.OLLAMA_KEEP_ALIVE,
             options={"num_ctx": config.OLLAMA_NUM_CTX},
             think=False,

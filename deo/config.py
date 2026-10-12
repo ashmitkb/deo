@@ -103,10 +103,16 @@ OLLAMA_KEEP_ALIVE = "30m"
 # single folder listing pushed one turn to 8,298 tokens -- the request was
 # rejected and the turn died. 12k fits comfortably next to Whisper on the 8GB
 # GPU (~1.7GB of KV cache for this 4B model).
-OLLAMA_NUM_CTX = 12288
-# Longest tool result handed back to the model, in characters (~1,500 tokens).
+# 8192, not 12288: at 12k the 9B model's KV cache didn't fit next to Whisper
+# on the 8GB card, so part of it ran on the CPU -- reading Deo's ~4,200-token
+# prompt took 4-18s per call (measured 2026-10-12). At 8k it fits: 0.4s, and
+# 41 tok/s instead of 16. brain.fit_to_context trims old history to fit.
+OLLAMA_NUM_CTX = 8192
+# Longest tool result handed back to the model, in characters (~1,000 tokens).
+# 4000, not 6000, since the context went to 8K: one result must not crowd out
+# the rest of the conversation.
 # Anything longer is trimmed with a note to make a narrower call.
-MAX_TOOL_RESULT_CHARS = 6000  # keep the model resident in VRAM instead of unloading after 5min idle
+MAX_TOOL_RESULT_CHARS = 4000
 
 # How many messages of conversation to keep behind the system prompt. The full
 # history is re-sent on every single turn (both providers are stateless), and
@@ -509,7 +515,8 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 # maintain by hand.
 WHISPER_INITIAL_PROMPT = (
     # "DeoProjects" (where Deo saves code) was heard as "do projects".
-    f"{ASSISTANT_NAME}. DeoProjects, PyCharm, Python. "
+    # "open Brave and Claude" came out as "open brave and thawed".
+    f"{ASSISTANT_NAME}. DeoProjects, PyCharm, Python, Claude, ChatGPT, WhatsApp. "
     + ", ".join(sorted(set(APP_PATH_REGISTRY) | set(APP_PROTOCOL_REGISTRY)))
     + "."
 )

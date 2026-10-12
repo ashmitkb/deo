@@ -11,6 +11,7 @@ Nothing here touches the network, the microphone, or the speakers.
 """
 
 import glob
+import json
 import os
 import sys
 import wave
@@ -195,6 +196,36 @@ def test_tool_loop():
     check("respects MAX_TOOL_ITERATIONS instead of looping forever",
           rounds <= config.MAX_TOOL_ITERATIONS, f"{rounds} rounds")
     check("still produces a reply when the cap is hit", brain.history[-1]["role"] == "assistant")
+
+    # The context is 8K now, so history is trimmed by SIZE before each call.
+    from deo.brain import fit_to_context
+    big = "x" * 6000
+    msgs = ([{"role": "system", "content": "sys"}]
+            + [m for i in range(8) for m in ({"role": "user", "content": f"q{i}"},
+                                              {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "t"}}]},
+                                              {"role": "tool", "content": big})]
+            + [{"role": "user", "content": "current question"}])
+    fitted = fit_to_context(msgs, [], 8192)
+    size = len(json.dumps(fitted)) / 3.2
+    check("old history is trimmed to fit 8K; system prompt and current request stay",
+          size <= 8192 - 1200 and fitted[0]["content"] == "sys" and fitted[-1]["content"] == "current question"
+          and fitted[1]["role"] != "tool", f"{len(fitted)} msgs, ~{size:.0f} tokens")
+    small = msgs[:1] + msgs[-1:]
+    check("a request that already fits is left alone", fit_to_context(small, [], 8192) == small)
+
+    # While a game runs, the wake check uses a small CPU model, not the GPU.
+    from deo import stt as _stt
+    used = []
+    class _CpuModel:
+        def transcribe(self, *a, **k):
+            used.append("cpu"); return iter([type("S", (), {"text": "Hey Deo."})()]), None
+    real_game, real_cpu = _stt._game_running, _stt._get_cpu_wake_model
+    _stt._game_running, _stt._get_cpu_wake_model = (lambda: True), (lambda: _CpuModel())
+    try:
+        heard = _stt._transcribe_plain(np.full(16000, 0.1, np.float32))
+        check("while gaming, 'hey Deo' is checked on the CPU", heard == "Hey Deo." and used == ["cpu"], repr(heard))
+    finally:
+        _stt._game_running, _stt._get_cpu_wake_model = real_game, real_cpu
 
     # A GPU driver reset (seen on waking from hibernate) kills the loaded
     # Whisper's CUDA context; the next call must reload it, not fail forever.

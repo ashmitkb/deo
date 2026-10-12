@@ -135,6 +135,36 @@ def _get_model():
     return _model
 
 
+_cpu_wake = None
+_cpu_wake_failed = False
+_cpu_wake_lock = threading.Lock()
+CPU_WAKE_MODEL = "small.en"
+
+
+def _game_running() -> bool:
+    try:
+        from . import gamemode
+        return bool(gamemode.running_game())
+    except Exception:
+        return False
+
+
+def _get_cpu_wake_model():
+    """Small CPU Whisper for wake checks while gaming (see _transcribe_plain).
+    Loaded on first use, kept after; None if it can't load."""
+    global _cpu_wake, _cpu_wake_failed
+    with _cpu_wake_lock:
+        if _cpu_wake is None and not _cpu_wake_failed:
+            try:
+                t0 = time.monotonic()
+                _cpu_wake = WhisperModel(CPU_WAKE_MODEL, device="cpu", compute_type="int8", cpu_threads=4)
+                print(f"[stt] gaming: wake checks on CPU ({CPU_WAKE_MODEL}, loaded in {time.monotonic() - t0:.1f}s)")
+            except Exception as e:
+                _cpu_wake_failed = True
+                print(f"[stt] couldn't load the CPU wake model ({e}) -- staying on the GPU")
+        return _cpu_wake
+
+
 def is_ready() -> bool:
     """Is Whisper loaded? Right after the laptop wakes it can take a minute
     or two (the GPU driver is still recovering), and the wake word needs it."""
@@ -189,6 +219,19 @@ def _transcribe_plain(audio: np.ndarray) -> str:
     peak = float(np.abs(audio).max()) if audio.size else 0.0
     if peak < 1e-4:
         return ""
+
+    if _game_running():
+        # A game owns the GPU: Whisper there took 17-20s per check while RDR2
+        # ran (vs 0.3s), and in-game dialogue fires the wake model constantly,
+        # so the listener spent most of its time blocked. A small English
+        # model on the CPU does it in ~1.3s and still hears "Hey Deo."
+        model = _get_cpu_wake_model()
+        if model is not None:
+            with _cpu_wake_lock:
+                segments, _ = model.transcribe(
+                    audio * (0.5 / peak), language="en", beam_size=1, without_timestamps=True,
+                    condition_on_previous_text=False, initial_prompt="Hey Deo.")
+                return " ".join(seg.text.strip() for seg in segments).strip()
 
     def run(model):
         with _model_lock:

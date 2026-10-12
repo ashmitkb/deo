@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import glob
+import json
 import sys
 import time
 import difflib
@@ -171,6 +172,23 @@ def _discover_installed_apps() -> dict:
         for pattern in ("*.lnk", "*.url"):
             for shortcut in glob.glob(os.path.join(root, "**", pattern), recursive=True):
                 add(os.path.splitext(os.path.basename(shortcut))[0], shortcut)
+
+    # Microsoft Store apps (Claude, WhatsApp, Phone Link...) have no shortcut
+    # file anywhere, so "open Claude" found nothing. Windows' own Start list
+    # has them, launchable as shell:AppsFolder\<AppID>.
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        entries = json.loads(out.stdout or "[]")
+        for entry in entries if isinstance(entries, list) else [entries]:
+            name, app_id = entry.get("Name"), entry.get("AppID")
+            if name and app_id:
+                add(name, "shell:AppsFolder\\" + app_id)
+    except Exception as e:
+        print(f"[tools] couldn't list Store apps: {e}")
     return apps
 
 
